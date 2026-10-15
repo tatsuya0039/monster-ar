@@ -529,10 +529,19 @@ function frame(now) {
 
 /* ---------- カメラ ---------- */
 async function openCamera(want) {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: want }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false,
-  });
-  if (camStream) camStream.getTracks().forEach((t) => t.stop());
+  // Androidは前後のカメラを同時に開けないので、先に今のカメラを止めてから開く
+  if (camStream) {
+    camStream.getTracks().forEach((t) => t.stop());
+    camStream = null; video.srcObject = null;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const base = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { ...base, facingMode: { exact: want } }, audio: false });
+  } catch (e) {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { ...base, facingMode: { ideal: want } }, audio: false });
+  }
   camStream = stream;
   facing = want;
   document.body.classList.toggle('front', want === 'user');
@@ -544,13 +553,15 @@ let switching = false;
 async function switchCamera() {
   if (switching || recording || !started) return;
   switching = true;
-  const want = facing === 'user' ? 'environment' : 'user';
+  const prev = facing;
+  const want = prev === 'user' ? 'environment' : 'user';
   try {
     await openCamera(want);
     needYawInit = true; spawnAll();
     flash(want === 'user' ? 'インカメラに切り替えました' : '背面カメラに切り替えました', 2500);
   } catch (e) {
-    flash('カメラを切り替えられませんでした', 3500);
+    flash(`カメラを切り替えられませんでした(${(e && e.name) || 'エラー'})`, 5000);
+    try { await openCamera(prev); } catch (e2) { /* 元のカメラも開けない場合は何もしない */ }
   } finally { switching = false; }
 }
 $('#flip').onclick = switchCamera;
