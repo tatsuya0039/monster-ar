@@ -10,10 +10,10 @@ import * as THREE from './three.module.min.js';
 
 const DEG = Math.PI / 180;
 const CAM_HEIGHT = 1.3;       // スマホを持つ高さ(m)。床の位置の仮定に使う
-const FLOOR_Y = -CAM_HEIGHT;
 const BASE_H = 0.4;           // モンスターの高さ(m)
 const SPRITE_ASPECT = 240 / 192;
 const VIDEO_VFOV = 63;        // 背面カメラの縦画角の目安(度)
+const VFOV_FRONT = 66;        // インカメラの縦画角の目安(度)
 const POSE_SEQ = [1, 2, 3, 2];
 const POSE_FPS = 5;
 const MOVE_SPEED = 1.1;       // 移動速度(m/s)
@@ -64,6 +64,11 @@ let paused = false;
 let animT = 0;
 let lightMul = 1;
 let started = false;
+let floorY = -CAM_HEIGHT;     // 床の高さ(カメラ原点から見た値)。置き直すたびに見えやすい高さへ調整する
+let pendingSpawn = false, spawnReqAt = 0;
+let facing = 'environment';   // 'environment'=背面 / 'user'=インカメ
+let camStream = null;
+const curVfov = () => (facing === 'user' ? VFOV_FRONT : VIDEO_VFOV);
 
 const gyro = { has: false, alpha: 0, beta: 0, gamma: 0 };
 const devQ = new THREE.Quaternion();
@@ -181,19 +186,23 @@ class Mon {
 
 /* ---------- 床との交点 ---------- */
 const _g = new THREE.Vector3();
+function setNdc(cx, cy) {
+  const x = cx / innerWidth * 2 - 1;
+  ndc.set(facing === 'user' ? -x : x, -(cy / innerHeight) * 2 + 1);
+}
 function groundPoint(cx, cy, out) {
-  ndc.set(cx / innerWidth * 2 - 1, -(cy / innerHeight) * 2 + 1);
+  setNdc(cx, cy);
   raycaster.setFromCamera(ndc, camera);
   const d = raycaster.ray.direction, o = raycaster.ray.origin;
   if (d.y > -0.03) return null;                 // 水平線より上は床ではない
   const hz = Math.hypot(d.x, d.z) || 1e-6;
-  let tt = (FLOOR_Y - o.y) / d.y;
+  let tt = (floorY - o.y) / d.y;
   tt = Math.min(Math.max(tt, 0.7 / hz), 9 / hz);  // 0.7〜9mに収める
-  out.copy(o).addScaledVector(d, tt); out.y = FLOOR_Y;
+  out.copy(o).addScaledVector(d, tt); out.y = floorY;
   return out;
 }
 function pick(cx, cy) {
-  ndc.set(cx / innerWidth * 2 - 1, -(cy / innerHeight) * 2 + 1);
+  setNdc(cx, cy);
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(mons.map((m) => m.body), false);
   return hits.length ? hits[0].object.userData.mon : null;
@@ -201,11 +210,21 @@ function pick(cx, cy) {
 function select(m) { selected = m; }
 
 /* ---------- 配置 ---------- */
-function spawnAll() {
+function spawnAll() { pendingSpawn = true; spawnReqAt = performance.now(); }
+function doSpawn() {
+  pendingSpawn = false;
+  // いまカメラが向いている方向の、画面の下寄り(高さ約72%)に足元が来るように置く。
+  // インカメは床が映らない角度になりがちなので、床の高さを見えやすい位置へ寄せる。
+  const f = new THREE.Vector3(); camera.getWorldDirection(f);
+  const pitch = Math.asin(Math.max(-1, Math.min(1, f.y)));
+  const down = Math.atan(0.44 * Math.tan(camera.fov * DEG / 2));
+  const depr = Math.max(down - pitch, 0.14);                  // 足元の水平線からの下向き角
+  const d = Math.min(3.6, Math.max(2.0, CAM_HEIGHT / Math.tan(depr)));
+  floorY = -Math.min(1.6, Math.max(0.45, d * Math.tan(depr)));
   // 縦画面は横の画角が約30°しかないので、3体が一度に見えるよう近めに並べる(中央のこだけ奥)
-  const slots = [[-0.4, 2.3], [0, 2.6], [0.4, 2.3]];
+  const slots = [[-0.4, d], [0, d + 0.3], [0.4, d]];
   mons.forEach((m, i) => {
-    m.pos.set(slots[i][0], FLOOR_Y, -slots[i][1]);
+    m.pos.set(slots[i][0], floorY, -slots[i][1]);
     m.target = null; m.carried = false; m.dragTarget = null;
     m.drop(i * 0.18);
   });
@@ -216,6 +235,7 @@ const _zee = new THREE.Vector3(0, 0, 1);
 const _euler = new THREE.Euler();
 const _q0 = new THREE.Quaternion();
 const _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const frontFlipQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 function screenAngle() {
   if (screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
   return typeof window.orientation === 'number' ? window.orientation : 0;
@@ -229,10 +249,12 @@ function deviceQuat(q) {
 }
 function initYaw() {
   deviceQuat(devQ);
-  const f = new THREE.Vector3(0, 0, -1).applyQuaternion(devQ);
+  const base = devQ.clone();
+  if (facing === 'user') base.multiply(frontFlipQ);
+  const f = new THREE.Vector3(0, 0, -1).applyQuaternion(base);
   let h = f;
   if (Math.abs(f.y) > 0.85) {           // 真下/真上を向いているときは画面の上方向を基準にする
-    const u = new THREE.Vector3(0, 1, 0).applyQuaternion(devQ);
+    const u = new THREE.Vector3(0, 1, 0).applyQuaternion(base);
     h = f.y < 0 ? u : u.negate();
   }
   const yaw = Math.atan2(-h.x, -h.z);
@@ -244,6 +266,7 @@ function updateCamera(dt) {
   if (needYawInit) initYaw();
   deviceQuat(devQ);
   tmpQ.copy(yawFix).multiply(devQ);
+  if (facing === 'user') tmpQ.multiply(frontFlipQ);
   if (snapCamera) { camera.quaternion.copy(tmpQ); snapCamera = false; }
   else camera.quaternion.slerp(tmpQ, 1 - Math.exp(-dt * 30));
 }
@@ -260,8 +283,9 @@ function resize() {
   const va = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16;
   const sa = w / h;
   // object-fit: cover で映像が上下に切れる場合は、画角も合わせて狭める
-  camera.fov = sa <= va ? VIDEO_VFOV
-    : 2 * Math.atan(Math.tan(VIDEO_VFOV * DEG / 2) * va / sa) / DEG;
+  const vf = curVfov();
+  camera.fov = sa <= va ? vf
+    : 2 * Math.atan(Math.tan(vf * DEG / 2) * va / sa) / DEG;
   camera.aspect = sa;
   camera.updateProjectionMatrix();
 }
@@ -297,11 +321,14 @@ function composite() {
   const cw = Math.max(2, Math.round(W * sc / 2) * 2), ch = Math.max(2, Math.round(H * sc / 2) * 2);
   if (comp.width !== cw || comp.height !== ch) { comp.width = cw; comp.height = ch; }
   const vw = video.videoWidth, vh = video.videoHeight;
+  cctx.save();
+  if (facing === 'user') { cctx.translate(cw, 0); cctx.scale(-1, 1); }
   if (vw) {
     const s = Math.max(cw / vw, ch / vh);
     cctx.drawImage(video, (cw - vw * s) / 2, (ch - vh * s) / 2, vw * s, vh * s);
   } else { cctx.fillStyle = '#111'; cctx.fillRect(0, 0, cw, ch); }
   cctx.drawImage(glCanvas, 0, 0, cw, ch);
+  cctx.restore();
 }
 
 let photoReq = false;
@@ -447,7 +474,7 @@ glCanvas.addEventListener('pointermove', (e) => {
     if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 10) drag.moved = true;
     if (drag.mon && drag.moved) {
       const g = groundPoint(e.clientX, e.clientY, _g);
-      if (g) drag.mon.dragTarget.set(g.x + drag.off.x, FLOOR_Y, g.z + drag.off.z);
+      if (g) drag.mon.dragTarget.set(g.x + drag.off.x, floorY, g.z + drag.off.z);
     }
   }
 });
@@ -481,6 +508,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000 || 0.016); last = now;
   updateCamera(dt);
+  if (pendingSpawn && (gyro.has || performance.now() - spawnReqAt > 800)) doSpawn();
   if (!initAt) initAt = now;
   if (!paused) animT += dt;
 
@@ -498,6 +526,34 @@ function frame(now) {
     }
   }
 }
+
+/* ---------- カメラ ---------- */
+async function openCamera(want) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: want }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false,
+  });
+  if (camStream) camStream.getTracks().forEach((t) => t.stop());
+  camStream = stream;
+  facing = want;
+  document.body.classList.toggle('front', want === 'user');
+  video.srcObject = stream;
+  await video.play();
+  resize();
+}
+let switching = false;
+async function switchCamera() {
+  if (switching || recording || !started) return;
+  switching = true;
+  const want = facing === 'user' ? 'environment' : 'user';
+  try {
+    await openCamera(want);
+    needYawInit = true; spawnAll();
+    flash(want === 'user' ? 'インカメラに切り替えました' : '背面カメラに切り替えました', 2500);
+  } catch (e) {
+    flash('カメラを切り替えられませんでした', 3500);
+  } finally { switching = false; }
+}
+$('#flip').onclick = switchCamera;
 
 /* ---------- 起動 ---------- */
 function loadTextures() {
@@ -532,11 +588,7 @@ async function start() {
     msg.classList.add('err'); $('#startBtn').disabled = false; return;
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false,
-    });
-    video.srcObject = stream;
-    await video.play();
+    await openCamera('environment');
   } catch (e) {
     msg.textContent = 'カメラを使えませんでした。ブラウザのサイト設定でカメラを許可して、もう一度お試しください。';
     msg.classList.add('err'); $('#startBtn').disabled = false; return;
@@ -571,5 +623,5 @@ window.__ar = {
   setOrientation(alpha, beta, gamma) { gyro.alpha = alpha; gyro.beta = beta; gyro.gamma = gamma; gyro.has = true; },
   get mons() { return mons.map((m) => ({ x: m.pos.x, z: m.pos.z, size: m.sizeK })); },
   screenOf(i) { const m = mons[i]; const v = new THREE.Vector3(m.pos.x, m.pos.y + 0.18 * m.sizeK, m.pos.z).project(camera); return { x: (v.x + 1) / 2 * innerWidth, y: (1 - v.y) / 2 * innerHeight }; },
-  get state() { return { started, gyro: { ...gyro }, fov: camera.fov, light: lightMul }; },
+  get state() { return { started, facing, gyro: { ...gyro }, fov: camera.fov, light: lightMul }; },
 };
