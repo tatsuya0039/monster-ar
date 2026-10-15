@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Monster AR</title>
+<style>
+  /* 画面構成: 全画面カメラ映像 → 3D描画 → 操作UI(下部に撮影バー) */
+  :root {
+    --ink: #ffffff;
+    --ink-dim: rgba(255,255,255,.72);
+    --glass: rgba(18,18,18,.55);
+    --glass-line: rgba(255,255,255,.22);
+    --rec: #ff3b30;
+    --font: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  }
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+  body { font-family: var(--font); color: var(--ink); -webkit-user-select: none; user-select: none; }
+
+  #cam, #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #cam { object-fit: cover; background: #111; }
+  #gl { touch-action: none; }
+
+  #ui { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between;
+        padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  .chip { align-self: flex-start; max-width: 100%; padding: 8px 12px; border-radius: 999px; font-size: 13px; line-height: 1.4;
+          background: var(--glass); border: 1px solid var(--glass-line); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  #status { display: none; }
+  #status.on { display: block; }
+  #rec { display: none; align-items: center; gap: 8px; align-self: center; font-variant-numeric: tabular-nums; }
+  #rec.on { display: inline-flex; }
+  #rec i { width: 10px; height: 10px; border-radius: 50%; background: var(--rec); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+
+  #bar { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  #modes { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--glass); border: 1px solid var(--glass-line);
+           backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); pointer-events: auto; }
+  #modes button { appearance: none; border: 0; background: transparent; color: var(--ink-dim); font: inherit; font-size: 14px; padding: 7px 18px; border-radius: 999px; }
+  #modes button[aria-pressed="true"] { background: #fff; color: #000; }
+  #row { width: 100%; max-width: 420px; display: flex; align-items: center; justify-content: space-between; }
+  .round { pointer-events: auto; appearance: none; width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--glass-line);
+           background: var(--glass); color: var(--ink); display: grid; place-items: center; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .round svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #shutter { pointer-events: auto; appearance: none; width: 76px; height: 76px; border-radius: 50%; padding: 0; background: transparent; border: 4px solid #fff; display: grid; place-items: center; }
+  #shutter b { width: 58px; height: 58px; border-radius: 50%; background: #fff; transition: transform .12s, border-radius .12s, background .12s; }
+  #shutter:active b { transform: scale(.88); }
+  body.video #shutter b { background: var(--rec); }
+  body.recording #shutter b { border-radius: 10px; transform: scale(.55); }
+  button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+
+  #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+  #flash.go { animation: flash .35s ease-out; }
+  @keyframes flash { from { opacity: .85; } to { opacity: 0; } }
+
+  .sheet { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; background: #000;
+           padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+  #start { text-align: center; }
+  #start .inner { max-width: 340px; display: grid; gap: 18px; justify-items: center; }
+  #start img { width: 108px; height: auto; }
+  #start .faces { display: flex; gap: 6px; align-items: flex-end; }
+  #start h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: .02em; }
+  #start p { margin: 0; font-size: 14px; line-height: 1.7; color: var(--ink-dim); text-wrap: balance; }
+  #start .err { color: #ffb4ae; }
+  .primary { appearance: none; border: 0; border-radius: 999px; background: #fff; color: #000; font: inherit; font-size: 16px; font-weight: 700; padding: 14px 36px; }
+  .ghost { appearance: none; border: 1px solid var(--glass-line); border-radius: 999px; background: transparent; color: var(--ink); font: inherit; font-size: 15px; padding: 12px 24px; }
+
+  #result .inner { width: 100%; max-width: 420px; max-height: 100%; display: grid; gap: 14px; justify-items: center; grid-template-rows: minmax(0,1fr) auto; }
+  #result .media { min-height: 0; max-height: 100%; display: grid; place-items: center; }
+  #result img, #result video { max-width: 100%; max-height: calc(100dvh - 150px); border-radius: 14px; background: #111; }
+  #result .btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  #result .note { margin: 0; font-size: 12px; color: var(--ink-dim); text-align: center; }
+  @media (prefers-reduced-motion: reduce) { #rec i { animation: none; } #flash.go { animation-duration: .01s; } }
+</style>
+</head>
+<body>
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="gl"></canvas>
+
+  <div id="ui">
+    <div>
+      <div id="status" class="chip"></div>
+      <div id="rec" class="chip"><i></i><span id="recTime">0:00</span></div>
+    </div>
+    <div id="bar">
+      <div id="modes" role="group" aria-label="撮影モード">
+        <button id="modePhoto" aria-pressed="true">写真</button>
+        <button id="modeVideo" aria-pressed="false">動画</button>
+      </div>
+      <div id="row">
+        <button class="round" id="recall" aria-label="モンスターを目の前に呼び戻す">
+          <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg>
+        </button>
+        <button id="shutter" aria-label="撮影"><b></b></button>
+        <button class="round" id="pause" aria-label="ダンスを一時停止">
+          <svg id="pauseIco" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="flash"></div>
+
+  <div id="start" class="sheet">
+    <div class="inner">
+      <div class="faces">
+        <img src="r_2.png" alt="">
+        <img src="b_3.png" alt="">
+        <img src="g_2.png" alt="">
+      </div>
+      <h1>モンスターが部屋にやってくる</h1>
+      <p id="startMsg">カメラとジャイロを使います。床の方へスマホを少し向けると、モンスターが足元に現れます。</p>
+      <button class="primary" id="startBtn">はじめる</button>
+    </div>
+  </div>
+
+  <div id="result" class="sheet" hidden>
+    <div class="inner">
+      <div class="media" id="resultMedia"></div>
+      <div>
+        <div class="btns">
+          <button class="primary" id="shareBtn">保存・共有</button>
+          <button class="ghost" id="closeBtn">閉じる</button>
+        </div>
+        <p class="note" id="resultNote"></p>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
