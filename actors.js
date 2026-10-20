@@ -10,6 +10,7 @@ import * as THREE from './three.module.min.js';
    動きの速さは「画面の半幅 hw」を基準にしているので、自撮りでも外カメでも同じ見え方になる
    ============================================================ */
 export const D0 = 1.7;
+export const SIZE_SCALE = 0.8;     // 集合絵の比率はそのまま、全体を少し小さく
 
 export const GUEST_DEFS = {
   chochin:  { name: '提灯',     img: ['chochin'],  frac: 0.21, zone: 'sky',    layer: 'back',  motion: 'float',   life: 11, at: ['evening','night'] },
@@ -18,11 +19,11 @@ export const GUEST_DEFS = {
   usagi:    { name: 'ウサギ',   img: ['rabbit'],   frac: 0.19, zone: 'ground', layer: 'front', motion: 'hophop',  life: 10, at: ['morning'] },
   tanuki:   { name: '狸',       img: ['tanuki'],   frac: 0.27, zone: 'edge',   layer: 'front', motion: 'peek',    life: 7.5, at: ['evening'] },
   kitsune:  { name: '狐',       img: ['kitsune'],  frac: 0.25, zone: 'edge',   layer: 'front', motion: 'peek',    life: 7.5, at: ['evening'] },
-  hyakume:  { name: '百目',     img: ['hyakume'],  frac: 0.56, zone: 'ground', layer: 'front', motion: 'crawl',   life: 12, at: ['night'] },
+  hyakume:  { name: '百目',     img: ['hyakume'],  frac: 0.56, zone: 'center', layer: 'back', edge: true, motion: 'crawl',   life: 12, at: ['night'] },
   umibozu:  { name: '海坊主',   img: ['umibozu'],  frac: 0.62, zone: 'center', layer: 'back',  motion: 'nyuru',   life: 5.2, at: [] },
   kappa:    { name: '河童',     img: ['kappa1', 'kappa2', 'kappa3'], frac: 0.25, zone: 'ground', layer: 'front', motion: 'walk', life: 11, fracBy: { kappa1: 0.155, kappa2: 0.22, kappa3: 0.255 }, at: ['morning','evening'] },
   yellow:   { name: '黄色いの', img: ['yellow'],   frac: 0.125, zone: 'ground', layer: 'front', motion: 'slither', speed: .20, at: ['morning'] },
-  wheel:    { name: '車輪',     img: ['wheel'],    frac: 0.47, zone: 'ground', layer: 'front', motion: 'spin',    life: 10, at: ['day'] },
+  wheel:    { name: '車輪',     img: ['wheel'],    frac: 0.47, zone: 'center', layer: 'back', edge: true, motion: 'spin',    life: 10, at: ['day'] },
   kuchi:    { name: '口',       img: ['kuchi'],    frac: 0.23, zone: 'ground', layer: 'front', motion: 'walk',    life: 11, at: ['day'] },
 };
 export const IMG_KEYS = [...new Set(Object.values(GUEST_DEFS).flatMap((d) => [...d.img, ...(d.parts || [])]))];
@@ -183,7 +184,7 @@ export class Guest {
     if (opt.ny != null && a.d) this.c.y = opt.ny * a.d * a.th;      // 自撮りでは、足元の高さ(画面の位置)を指定できる
     this.inner = opt.inner || 0;
     const fr = (def.fracBy && opt.img && def.fracBy[opt.img]) || def.frac;
-    this.H = fr * 2 * a.d * a.th; this.aspect = def.rig ? KASA.w / KASA.h : tex.image.width / tex.image.height; this.W = this.H * this.aspect;
+    this.H = fr * SIZE_SCALE * 2 * a.d * a.th; this.aspect = def.rig ? KASA.w / KASA.h : tex.image.width / tex.image.height; this.W = this.H * this.aspect;
     this.dir = opt.dir || (Math.random() < 0.5 ? -1 : 1); this.side = opt.side || this.dir;
     this.ph = opt.ph != null ? opt.ph : Math.random() * TAU;
     this.s0 = (opt.s0 || 0) * this.hw; this.s = this.s0;

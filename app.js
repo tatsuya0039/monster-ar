@@ -1,6 +1,6 @@
 import * as THREE from './three.module.min.js';
-import { GUEST_DEFS, IMG_KEYS, Guest } from './actors.js?v=8';
-import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=8';
+import { GUEST_DEFS, IMG_KEYS, Guest, SIZE_SCALE } from './actors.js?v=9';
+import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=9';
 
 /* ============================================================
    Monster AR  v4
@@ -11,7 +11,7 @@ import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=8';
 
 const DEG = Math.PI / 180;
 const CAM_HEIGHT = 1.3;
-const ONI_FRAC = 0.14;            // おにの高さ(画面の高さに対する割合。集合絵の比率に合わせる)
+const ONI_FRAC = 0.14 * SIZE_SCALE;            // おにの高さ(画面の高さに対する割合。集合絵の比率に合わせる)
 const BASE_H = 0.4;               // おに(外カメ)の高さ m
 const FRONT_ONI_H = 0.36;         // おに(自撮り)の高さ m @D0
 const SPRITE_ASPECT = 240 / 192;
@@ -143,7 +143,7 @@ const ctx = {
 
 
 /* ---------- ホーム画面の図鑑 ---------- */
-const thumb = (key) => `y_${GUEST_DEFS[key].img[GUEST_DEFS[key].img.length - 1]}.png?v=8`;
+const thumb = (key) => `y_${GUEST_DEFS[key].img[GUEST_DEFS[key].img.length - 1]}.png?v=9`;
 function buildMenu() {
   const fig = (k, label) => `<figure><div class="th"><img src="${thumb(k)}" alt="" loading="lazy"></div><figcaption>${label || GUEST_DEFS[k].name}</figcaption></figure>`;
   const list = ['chochin', 'hitodama', 'kasa', 'usagi', 'tanuki', 'kitsune', 'hyakume', 'kappa', 'yellow', 'wheel', 'kuchi'];
@@ -171,7 +171,13 @@ function freeSlot(zone) {
 /* ---------- 当たり判定(キャラどうしを絶対に重ねない) ----------
    自撮り: 画面上(NDC)の四角で判定し、重なったら軽いほうを横へ押しのける。重いのは 海坊主 > おに > おばけ
    外カメ: 床の上の円で判定する */
-const MASS = (a) => (a.def && a.def.motion === 'nyuru' ? 6 : a.def ? 1 : 3);
+const MASS = (a) => (a.def && (a.def.motion === 'nyuru' || a.def.edge) ? 6 : a.def ? 1 : 3);
+/* 顔のまわり(人の前に出るキャラは入れない) */
+function faceBox() {
+  if (!isFront() || !segActive || !headNdc) return null;
+  const th = Math.tan(camera.fov * DEG / 2);
+  return { x: headNdc.x, y: headNdc.y - 0.2, hx: Math.max(0.24, headNdc.w * 0.62), hy: 0.3, face: true };
+}
 function allActors() { return [...mons, ...guests.filter((g) => !g.dead && g.u >= 0)]; }
 function boxOf(a) {
   const th = Math.tan(camera.fov * DEG / 2), d = Math.max(0.3, -a.group.position.z);
@@ -185,10 +191,12 @@ function resolveCollisions(dt) {
   const acts = allActors();
   for (const a of acts) if (!a.sep) { a.sep = new THREE.Vector3(); a.sepGoal = new THREE.Vector3(); }
   if (isFront()) {
-    const it = acts.map((a) => ({ a, ...boxOf(a), px: 0, py: 0, m: MASS(a), free: a.def && ['peek', 'drift', 'slither', 'nyuru'].includes(a.def.motion) }));
+    const it = acts.map((a) => ({ a, ...boxOf(a), px: 0, py: 0, m: MASS(a), free: a.def && (a.def.edge || ['peek', 'drift', 'slither', 'nyuru'].includes(a.def.motion)) }));
+    const fb = faceBox(); if (fb) it.push({ a: null, ...fb, px: 0, py: 0, m: 1e6, free: true });
     for (let k = 0; k < 12; k++) {
       for (let i = 0; i < it.length; i++) for (let j = i + 1; j < it.length; j++) {
         const A = it[i], B = it[j];
+        if ((A.face && (!B.a.def || B.a.def.layer === 'back')) || (B.face && (!A.a.def || A.a.def.layer === 'back'))) continue;      // 顔は、人の前に出るキャラだけを避けさせる
         const dx = (A.x + A.px) - (B.x + B.px), dy = (A.y + A.py) - (B.y + B.py);
         const ox = A.hx + B.hx - Math.abs(dx), oy = A.hy + B.hy - Math.abs(dy);
         if (ox <= 0 || oy <= 0) continue;
@@ -203,7 +211,7 @@ function resolveCollisions(dt) {
         if (cy > my) A.py -= cy - my; else if (cy < -my) A.py -= cy + my;
       }
     }
-    for (const A of it) A.a.sepGoal.set(A.px * A.sx, A.py * A.sy, 0);
+    for (const A of it) if (A.a) A.a.sepGoal.set(A.px * A.sx, A.py * A.sy, 0);
   } else {
     const gr = acts.filter((a) => !(a.def && a.def.zone === 'sky'));
     const it = gr.map((a) => ({ a, x: a.group.position.x, z: a.group.position.z, r: (a.def ? a.W : BASE_H * SPRITE_ASPECT * a.sizeK) * 0.34, m: MASS(a), px: 0, pz: 0 }));
@@ -226,9 +234,10 @@ function resolveCollisions(dt) {
 /* 新しく出すおばけの場所: いるキャラから、いちばん離れた所を選ぶ(自撮りのみ。外カメは床の上で後から押しのける) */
 function chooseSpot(def, sideHint) {
   if (!isFront()) return null;
-  const a = anchor(def.zone, def.layer), H = def.frac * 2 * a.d * a.th;
+  const a = anchor(def.zone, def.layer), H = def.frac * SIZE_SCALE * 2 * a.d * a.th;
   const hx = (H * 0.8 / 2) / a.hw * 0.72, hy = (H / 2) / (a.d * a.th) * 0.85;
   const others = allActors().map(boxOf);
+  const fb = faceBox(); if (fb && def.layer === 'front') others.push(fb);
   const RANGE = { ground: [-0.84, -0.66], sky: [0.35, 0.78], edge: [-0.65, 0.4] }[def.zone] || [-1, -1];
   let best = null;
   for (let i = 0; i < 28; i++) {
@@ -260,6 +269,10 @@ function spawnGuest(key, opt = {}) {
     else if (['hop', 'hophop', 'walk', 'crawl', 'spin'].includes(def.motion)) { o.s0 = spot ? spot.s : freeSlot(def.zone); if (spot) o.ny = spot.ny; }
     else if (def.motion === 'slither' || def.motion === 'drift') { if (spot) o.ny = spot.ny; }
     else if (def.motion === 'peek') { if (spot) { o.ny = spot.ny; o.side = spot.side; o.dir = spot.side; } }
+    if (def.edge && key !== 'umibozu') {                       // 大きいおばけは、人の後ろで画面の端に寄せる
+      const sd = headNdc ? (headNdc.x > 0 ? -1 : 1) : (Math.random() < 0.5 ? -1 : 1);
+      o.s0 = sd * 0.72; o.side = sd; o.ny = undefined;
+    }
     if (key === 'umibozu') {                                  // 人の肩のうしろ(空いている側)から
       const sd = headNdc ? (headNdc.x > 0 ? -1 : 1) : (Math.random() < 0.5 ? -1 : 1);
       o.side = sd; o.xc = headNdc ? THREE.MathUtils.clamp(headNdc.x + sd * 0.62, -0.78, 0.78) : sd * 0.62;
@@ -842,7 +855,7 @@ async function loadAll() {
 }
 function loadGuestTextures() {            // 起動後に裏で読み込む(待たせない)
   const loader = new THREE.TextureLoader(), aniso = renderer.capabilities.getMaxAnisotropy();
-  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=8`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
+  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=9`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
 }
 
 async function start(want) {
