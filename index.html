@@ -61,25 +61,7 @@
 
   .sheet { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; background: #000;
            padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
-  #start { text-align: center; display: flex; overflow-y: auto; }
-  #start .inner { margin: auto; padding: 8px 0 24px; }
-  #menu { width: 100%; text-align: left; border: 1px solid var(--glass-line); border-radius: 14px; background: rgba(255,255,255,.04); }
-  #menu summary { cursor: pointer; list-style: none; padding: 12px 14px; font-size: 14px; text-align: center; }
-  #menu summary::-webkit-details-marker { display: none; }
-  #menu[open] summary { border-bottom: 1px solid var(--glass-line); }
-  #menuBody { padding: 12px 14px 14px; display: grid; gap: 14px; }
-  #menuBody h2 { margin: 0 0 6px; font-size: 13px; font-weight: 700; letter-spacing: .04em; }
-  #menuBody .note { font-size: 11.5px; line-height: 1.6; color: var(--ink-dim); margin: 0; }
-  .row { display: grid; grid-template-columns: 112px 1fr; gap: 8px; align-items: center; padding: 8px 8px; border-radius: 10px; }
-  .row.now { background: rgba(255,255,255,.12); outline: 1px solid rgba(255,255,255,.5); }
-  .row .lab b { display: block; font-size: 15px; }
-  .row .lab span { font-size: 11px; color: var(--ink-dim); line-height: 1.4; display: block; }
-  .row .lab i { font-style: normal; font-size: 10px; background: #fff; color: #000; border-radius: 999px; padding: 1px 7px; margin-left: 4px; vertical-align: 2px; }
-  .yk { display: flex; flex-wrap: wrap; gap: 8px 10px; }
-  .yk figure { margin: 0; width: 52px; text-align: center; }
-  .yk .th { height: 44px; display: grid; place-items: center; }
-  .yk img { max-width: 48px; max-height: 44px; width: auto; height: auto; }
-  .yk figcaption { font-size: 10.5px; margin-top: 2px; line-height: 1.3; }
+  #start { text-align: center; }
   #start .inner { max-width: 340px; display: grid; gap: 18px; justify-items: center; }
   #start img { width: 108px; height: auto; }
   #start .faces { display: flex; gap: 6px; align-items: flex-end; }
@@ -148,10 +130,6 @@
         <button class="primary" id="startSelf">自分で撮る<small>インカメラ</small></button>
         <button class="ghost" id="startOther">撮ってもらう<small>外カメラ・床におばけが出ます</small></button>
       </div>
-      <details id="menu">
-        <summary>おばけが出てくる条件を見る</summary>
-        <div id="menuBody"></div>
-      </details>
     </div>
   </div>
 
@@ -168,6 +146,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=5"></script>
+  <script type="module" src="app.js?v=4"></script>
 </body>
 </html>
