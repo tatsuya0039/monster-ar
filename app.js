@@ -1,6 +1,6 @@
 import * as THREE from './three.module.min.js';
-import { D0, GUEST_DEFS, IMG_KEYS, Guest, pickByTime, BANDS, GESTURES, period } from './actors.js?v=7';
-import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=7';
+import { GUEST_DEFS, IMG_KEYS, Guest } from './actors.js?v=8';
+import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=8';
 
 /* ============================================================
    Monster AR  v4
@@ -11,6 +11,7 @@ import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=7';
 
 const DEG = Math.PI / 180;
 const CAM_HEIGHT = 1.3;
+const ONI_FRAC = 0.14;            // おにの高さ(画面の高さに対する割合。集合絵の比率に合わせる)
 const BASE_H = 0.4;               // おに(外カメ)の高さ m
 const FRONT_ONI_H = 0.36;         // おに(自撮り)の高さ m @D0
 const SPRITE_ASPECT = 240 / 192;
@@ -105,15 +106,14 @@ function setSegActive(on) {
 let lastGesture = 0;
 const gestures = new Gestures((name) => triggerGesture(name));
 const motionEn = new MotionEnergy(video);
+/* 動きで出るのは「海坊主」だけ(自撮りで画面にぐっと近づく)。出ている間は、ほかのおばけは引っ込む */
+let umiOn = false, lastUmi = 0;
 function triggerGesture(name) {
-  if (!started || recordingBusy()) return;
-  const alive = guests.filter((g) => !g.dead).length;
-  if (alive >= MAX_GUESTS + 1) return;
-  lastGesture = performance.now();
-  if (name === 'raise') { spawnGuest('chochin'); if (Math.random() < 0.6) spawnGuest('hitodama'); }
-  else if (name === 'close') spawnGuest('umibozu');
-  else if (name === 'sway') spawnPair();
-  else if (name === 'move') spawnGuest(pickByTime(['umibozu']));
+  if (!started || name !== 'close' || umiOn || !isFront() || performance.now() - lastUmi < 15000) return;
+  const made = spawnGuest('umibozu', { force: true });
+  if (!made) return;
+  umiOn = true; lastUmi = performance.now(); lastGesture = lastUmi;
+  guests.forEach((g) => { if (g.key !== 'umibozu') g.leave(); });
 }
 const recordingBusy = () => false;
 
@@ -128,13 +128,13 @@ function anchor(zone, layer) {
   if (isFront()) {
     const d = zone === 'center' ? 2.3 : zone === 'sky' ? 2.4 : layer === 'front' ? FRONT_D : BACK_D;
     const ny = { ground: -0.80, sky: 0.55, center: -1.0, edge: -0.50 }[zone];
-    return { c: new THREE.Vector3(0, ny * d * th, -d), right: new THREE.Vector3(1, 0, 0), hw: d * th * camera.aspect, k: d / D0, d, th };
+    return { c: new THREE.Vector3(0, ny * d * th, -d), right: new THREE.Vector3(1, 0, 0), hw: d * th * camera.aspect, k: 1, d, th };
   }
   camera.getWorldDirection(_f); _f.y = 0;
   if (_f.lengthSq() < 1e-4) _f.set(0, 0, -1);
   _f.normalize();
   const c = _f.clone().multiplyScalar(rearD); c.y = floorY + (zone === 'sky' ? 0.85 : 0);
-  return { c, right: new THREE.Vector3(-_f.z, 0, _f.x), hw: rearD * th * camera.aspect, k: 1 };
+  return { c, right: new THREE.Vector3(-_f.z, 0, _f.x), hw: rearD * th * camera.aspect, k: 1, d: rearD, th };
 }
 const ctx = {
   scene, flatGeo, shadowTex, mode: () => mode, lightMul: () => lightMul, anchor,
@@ -142,26 +142,15 @@ const ctx = {
 };
 
 
-/* ---------- ホーム画面の「出てくる条件」 ---------- */
-const thumb = (key) => `y_${GUEST_DEFS[key].img[0]}.png?v=7`;
-function figure(key, label) {
-  return `<figure><div class="th"><img src="${thumb(key)}" alt="" loading="lazy"></div><figcaption>${label || GUEST_DEFS[key].name}</figcaption></figure>`;
-}
+/* ---------- ホーム画面の図鑑 ---------- */
+const thumb = (key) => `y_${GUEST_DEFS[key].img[GUEST_DEFS[key].img.length - 1]}.png?v=8`;
 function buildMenu() {
-  const now = period();
-  const names = (list) => list.filter((k) => k !== 'kitsune').map((k) => (k === 'tanuki' ? figure('tanuki', '狸と狐') : figure(k))).join('');
-  let h = `<section><h2>時間で出てくる(自動)</h2><p class="note">端末の時計で、いまの時間帯のおばけが、ときどき1〜2体ずつ入れかわりで出ます。</p>`;
-  for (const [id, b] of Object.entries(BANDS)) {
-    const list = Object.keys(GUEST_DEFS).filter((k) => GUEST_DEFS[k].at.includes(id));
-    h += `<div class="row${id === now ? ' now' : ''}"><div class="lab"><b>${b.label}${id === now ? '<i>いま</i>' : ''}</b><span>${b.text}</span></div><div class="yk">${names(list)}</div></div>`;
-  }
-  h += `</section><section><h2>動きで呼べる(いつでも)</h2><p class="note">時間に関係なく、その動きをすると出てきます。</p>`;
-  for (const g of GESTURES) {
-    const who = g.yokai.length ? names(g.yokai) : '<span class="note">いまの時間帯のおばけが1体</span>';
-    h += `<div class="row"><div class="lab"><b>${g.label}</b><span>${g.where}</span></div><div class="yk">${who}</div></div>`;
-  }
-  h += `</section><section><h2>いつもいる</h2><div class="row"><div class="lab"><b>おに</b><span>3匹</span></div><div class="yk"><figure><div class="th"><img src="r_2.png" alt=""></div><figcaption>赤</figcaption></figure><figure><div class="th"><img src="b_3.png" alt=""></div><figcaption>青</figcaption></figure><figure><div class="th"><img src="g_2.png" alt=""></div><figcaption>緑</figcaption></figure></div></div></section>`;
-  $('#menuBody').innerHTML = h;
+  const fig = (k, label) => `<figure><div class="th"><img src="${thumb(k)}" alt="" loading="lazy"></div><figcaption>${label || GUEST_DEFS[k].name}</figcaption></figure>`;
+  const list = ['chochin', 'hitodama', 'kasa', 'usagi', 'tanuki', 'kitsune', 'hyakume', 'kappa', 'yellow', 'wheel', 'kuchi'];
+  $('#menuBody').innerHTML =
+    `<section><h2>いつもいる</h2><div class="yk"><figure><div class="th"><img src="r_2.png" alt=""></div><figcaption>赤おに</figcaption></figure><figure><div class="th"><img src="b_3.png" alt=""></div><figcaption>青おに</figcaption></figure><figure><div class="th"><img src="g_2.png" alt=""></div><figcaption>緑おに</figcaption></figure></div></section>
+     <section><h2>撮るたびに入れかわる</h2><p class="note">1枚撮るたび、または ↻ を押すたびに、いっしょに写るおばけが変わります。</p><div class="yk">${list.map((k) => fig(k)).join('')}</div></section>
+     <section><h2>ときどき出る</h2><p class="note">自撮りで、画面にぐっと近づいてみてください。</p><div class="yk">${fig('umibozu')}</div></section>`;
 }
 buildMenu();
 
@@ -237,7 +226,7 @@ function resolveCollisions(dt) {
 /* 新しく出すおばけの場所: いるキャラから、いちばん離れた所を選ぶ(自撮りのみ。外カメは床の上で後から押しのける) */
 function chooseSpot(def, sideHint) {
   if (!isFront()) return null;
-  const a = anchor(def.zone, def.layer), H = def.h * a.k;
+  const a = anchor(def.zone, def.layer), H = def.frac * 2 * a.d * a.th;
   const hx = (H * 0.8 / 2) / a.hw * 0.72, hy = (H / 2) / (a.d * a.th) * 0.85;
   const others = allActors().map(boxOf);
   const RANGE = { ground: [-0.84, -0.66], sky: [0.35, 0.78], edge: [-0.65, 0.4] }[def.zone] || [-1, -1];
@@ -257,18 +246,16 @@ function chooseSpot(def, sideHint) {
 function spawnGuest(key, opt = {}) {
   const def = GUEST_DEFS[key];
   if (!def) return null;
-  const alive = guests.filter((g) => !g.dead).length;
-  const n = key === 'chochin' ? 2 + (Math.random() < 0.5 ? 1 : 0) : key === 'hitodama' ? 1 + (Math.random() < 0.5 ? 1 : 0) : 1;
+  const n = key === 'chochin' ? 2 : 1;
   const imgKey = def.img[Math.floor(Math.random() * def.img.length)];
   const tex = gtex[imgKey];
-  if (!tex || alive + n > MAX_GUESTS + 1) return null;
+  if (!tex) return null;
   if (def.parts && !def.parts.every((p) => gtex[p])) return null;     // 部品がそろってから出す
   const made = [];
   let spot = null;
   for (let i = 0; i < n; i++) {
-    const o = { ...opt, delay: i * 0.45 };
+    const o = { ...opt, delay: i * 0.3, img: imgKey };
     if (i === 0) spot = chooseSpot(def, opt.side);
-    if (spot && key !== 'umibozu' && spot.score < -0.12 && def.motion !== 'peek') return null;     // すき間がなければ出さない
     if (def.motion === 'float') { const base = spot ? spot.s : freeSlot(def.zone); o.s0 = Math.max(-0.75, Math.min(0.75, base + (i - (n - 1) / 2) * 0.45)); o.ph = i * 2.1; if (spot) o.ny = spot.ny + i * 0.05; }
     else if (['hop', 'hophop', 'walk', 'crawl', 'spin'].includes(def.motion)) { o.s0 = spot ? spot.s : freeSlot(def.zone); if (spot) o.ny = spot.ny; }
     else if (def.motion === 'slither' || def.motion === 'drift') { if (spot) o.ny = spot.ny; }
@@ -281,37 +268,49 @@ function spawnGuest(key, opt = {}) {
     const g = new Guest(ctx, key, tex, o);
     guests.push(g); made.push(g);
   }
-  if (!opt.quiet) toast(`${def.name}が出てきた`);
-  seen.add(key); updateCount();
   return made;
 }
 function spawnPair() {
-  if (!gtex.tanuki || !gtex.kitsune) return;
+  if (!gtex.tanuki || !gtex.kitsune) return null;
   const spot = chooseSpot(GUEST_DEFS.tanuki);
-  if (spot && spot.score < -0.12) return;
   const side = spot ? spot.side : (Math.random() < 0.5 ? -1 : 1), ny = spot ? spot.ny : undefined;
-  guests.push(new Guest(ctx, 'tanuki', gtex.tanuki, { side, dir: side, ny }));
-  guests.push(new Guest(ctx, 'kitsune', gtex.kitsune, { side, dir: side, delay: 0.5, ph: 1.7, ny: ny != null ? ny + 0.1 : ny, inner: 1.0 }));
-  seen.add('tanuki'); seen.add('kitsune'); updateCount();
-  toast('狸と狐が出てきた');
+  const a = new Guest(ctx, 'tanuki', gtex.tanuki, { side, dir: side, ny });
+  const b = new Guest(ctx, 'kitsune', gtex.kitsune, { side, dir: side, delay: 0.4, ph: 1.7, ny: ny != null ? ny + 0.1 : ny, inner: 1.0 });
+  guests.push(a, b);
+  return [a, b];
 }
-const seen = new Set();
-function updateCount() { $('#count').textContent = `おばけ ${seen.size}/${Object.keys(GUEST_DEFS).length}`; }
 let toastTimer = 0;
-function toast(msg) {
-  statusEl.textContent = msg; statusEl.classList.add('on');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => statusEl.classList.remove('on'), 2200);
-}
 
-/* 時間帯に合わせて、ときどき勝手に出てくる */
-let nextAmbient = 0;
-function ambient(now) {
-  if (now < nextAmbient) return;
-  nextAmbient = now + 7000 + Math.random() * 6000;
-  const alive = guests.filter((g) => !g.dead).length;
-  if (alive >= 2) return;
-  const key = pickByTime();
-  if (key === 'tanuki') spawnPair(); else spawnGuest(key);
+/* ---------- 撮るたびに変わる「今回のメンバー」 ----------
+   cost = 画面を占める大きさ(集合絵の比率): 大=3 / 中=0.9〜1.9 / 小=0.6。1回の予算は3 → 大は1体だけ、中なら2体+小1体まで */
+const UNITS = { hyakume: 3, wheel: 3, pair: 1.9, chochin: 1.6, kasa: 1.3, kuchi: 1.1, kappa: 1.1, usagi: 0.9, hitodama: 0.6, yellow: 0.6 };
+const BUDGET = 3;
+let deck = [], cast = [], castGen = 0;
+const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+function drawCast() {                         // 山札から、予算に収まるまで引く(1周するまで同じものは出ない)
+  let left = BUDGET; const out = [];
+  while (out.length < 3) {
+    if (!deck.length) deck = shuffle(Object.keys(UNITS));
+    const idx = deck.findIndex((k) => UNITS[k] <= left + 1e-6);
+    if (idx < 0) { if (out.length) break; deck = shuffle(Object.keys(UNITS)); continue; }
+    const k = deck.splice(idx, 1)[0]; out.push(k); left -= UNITS[k];
+    if (left < 0.55) break;
+  }
+  return out;
+}
+function spawnUnit(k, gen, tries = 0) {
+  if (gen !== castGen || !started || umiOn) return;      // 海坊主が出ている間は待つ(帰ったら戻る)
+  const ok = k === 'pair' ? spawnPair() : spawnGuest(k, { force: true });
+  if (!ok && tries < 40) setTimeout(() => spawnUnit(k, gen, tries + 1), 250);      // 画像の読み込み待ち
+}
+function spawnCast(list, gen) { list.forEach((k, i) => setTimeout(() => spawnUnit(k, gen), 150 + i * 350)); }
+function rerollCast(now = false) {
+  castGen++; const gen = castGen;
+  umiOn = false;
+  guests.forEach((g) => g.leave());
+  cast = drawCast();
+  const go = () => { if (gen === castGen) spawnCast(cast, gen); };
+  if (now) go(); else setTimeout(go, 450);
 }
 
 /* ---------- おに ---------- */
@@ -348,7 +347,7 @@ class Mon {
     let moving = false;
     let d = BACK_D, depthK = 1;
     if (front) {
-      d = BACK_D; depthK = d / D0;
+      d = BACK_D;
       const kk = 1 - Math.exp(-dt * 5);
       this.nx += (this.hx + this.ux - this.nx) * kk; this.ny += (this.hy + this.uy - this.ny) * kk;
       ndcToWorld(this.nx, this.ny, d, this.pos);
@@ -392,9 +391,10 @@ class Mon {
 
     const beat = f - Math.floor(f);
     const bounce = (moving || this.carried) ? 0 : Math.sin(Math.PI * beat);
-    const baseH = front ? FRONT_ONI_H : BASE_H;
-    const sz = this.sizeK * depthK;
-    const lift = (bounce * 0.025 * baseH / BASE_H + this.hopY + this.carryY + reactY + dropY) * sz;
+    const baseH = BASE_H;
+    const scrH = 2 * Math.max(1, -this.pos.z) * Math.tan(camera.fov * DEG / 2);       // その距離で画面の高さが何mか
+    const sz = ONI_FRAC * scrH * this.sizeK / baseH;
+    const lift = (bounce * 0.025 + this.hopY + this.carryY + reactY + dropY) * sz;
 
     this.flip += (this.flipTo - this.flip) * (1 - Math.exp(-dt * 14));
     const h = baseH * sz;
@@ -591,6 +591,7 @@ function showResult(kind, blob) {
   box.appendChild(el);
   $('#resultNote').textContent = kind === 'photo' ? '画像を長押しして保存もできます。' : '';
   $('#result').hidden = false;
+  rerollCast();                       // 1枚撮ったら、次はメンバーを変える
 }
 function takePhoto() {
   select(null); compMax = 2400; photoReq = true;
@@ -642,7 +643,7 @@ function setCapMode(m) {
 $('#modePhoto').onclick = () => setCapMode('photo');
 $('#modeVideo').onclick = () => setCapMode('video');
 $('#shutter').onclick = () => { if (capMode === 'photo') takePhoto(); else recording ? stopRecording() : startRecording(); };
-$('#recall').onclick = () => { needYawInit = true; spawnAll(); flash('おにを集め直しました', 2200); };
+$('#recall').onclick = () => { needYawInit = true; spawnAll(); rerollCast(); };
 $('#pause').onclick = () => {
   paused = !paused;
   $('#pauseIco').innerHTML = paused ? '<path d="M8 5l11 7-11 7z"/>' : '<path d="M9 5v14M15 5v14"/>';
@@ -765,9 +766,7 @@ function frame(now) {
   // 動きの検出: 切り抜きが使えるときは seg 側、そうでなければ映像の変化量
   seg.tick(now);
   if (now - shakeT > 120) { shaky = camera.quaternion.angleTo(shakeQ) > 0.06; shakeQ.copy(camera.quaternion); shakeT = now; }
-  if (started && !segActive && motionEn.sample(now, shaky) && now - lastGesture > 6500) triggerGesture('move');
-  if (started) ambient(now);
-  hintTick(now);
+  if (umiOn && !guests.some((g) => g.key === 'umibozu')) { umiOn = false; castGen++; spawnCast(cast, castGen); }      // 海坊主が帰ったら、元のメンバーが戻る
 
   renderer.render(scene, camera);
   if (photoReq || recording) {
@@ -796,12 +795,14 @@ async function openCamera(want) {
 function enterMode(m) {
   mode = m;
   guests.forEach((g) => g.dispose()); guests.length = 0;
+  umiOn = false;
   for (const mo of mons) { mo.carried = false; mo.target = null; mo.ux = mo.uy = 0; mo.group.visible = true; }
   resize();
   setSegActive(m === 'front' && seg.ready && !seg.failed);
-  nextAmbient = performance.now() + 4500; hintAt = 0; hintIdx = 0; lastGesture = 0;
+  lastGesture = 0;
   needYawInit = true; snapCamera = true;
   spawnAll();
+  rerollCast(true);
 }
 let segInitStarted = false;
 function ensureSeg() {                    // 切り抜きは裏で準備。できるまでは通常表示
@@ -841,7 +842,7 @@ async function loadAll() {
 }
 function loadGuestTextures() {            // 起動後に裏で読み込む(待たせない)
   const loader = new THREE.TextureLoader(), aniso = renderer.capabilities.getMaxAnisotropy();
-  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=7`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
+  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=8`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
 }
 
 async function start(want) {
@@ -857,7 +858,6 @@ async function start(want) {
   try { textures = await loadAll(); } catch (e) { return fail('画像の読み込みに失敗しました。ページを開き直してください。'); }
   ONI.forEach((id, i) => mons.push(new Mon(id, i, textures)));
   loadGuestTextures();
-  updateCount();
   $('#start').hidden = true;
   started = true;
   enterMode(want);
@@ -881,6 +881,6 @@ window.__ar = {
   feed(f) { onMask(f); }, scene, seg, personMat, personMesh, setSeg(on) { seg.ready = true; setSegActive(on); },
   overlaps() { const ac = allActors(), det = []; const it = ac.map(boxOf); let mx = 0, n = 0; for (let i = 0; i < it.length; i++) for (let j = i + 1; j < it.length; j++) { const A = it[i], B = it[j]; const ox = A.hx + B.hx - Math.abs(A.x - B.x), oy = A.hy + B.hy - Math.abs(A.y - B.y); if (ox > 0 && oy > 0) { mx = Math.max(mx, Math.min(ox, oy)); n++; det.push([ac[i].key || ac[i].id, ac[j].key || ac[j].id, +Math.min(ox, oy).toFixed(2), +A.x.toFixed(2), +A.y.toFixed(2), +B.x.toFixed(2), +B.y.toFixed(2)]); } } return { max: +mx.toFixed(3), pairs: n, actors: it.length, det }; },
   get guests() { return guests.map((g) => ({ k: g.key, s: +g.s.toFixed(2), u: +g.u.toFixed(1), dead: g.dead })); },
-  get mons() { return mons.map((m) => ({ nx: +m.nx.toFixed(2), ny: +m.ny.toFixed(2), x: m.pos.x, z: m.pos.z })); },
-  get state() { return { started, mode, facing, fov: camera.fov, segActive, headNdc, seen: [...seen], gtex: Object.keys(gtex) }; },
+  get cast() { return cast; }, reroll: () => rerollCast(), get mons() { return mons.map((m) => ({ nx: +m.nx.toFixed(2), ny: +m.ny.toFixed(2), x: m.pos.x, z: m.pos.z })); },
+  get state() { return { started, mode, facing, fov: camera.fov, segActive, headNdc, gtex: Object.keys(gtex) }; },
 };

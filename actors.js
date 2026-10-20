@@ -12,18 +12,18 @@ import * as THREE from './three.module.min.js';
 export const D0 = 1.7;
 
 export const GUEST_DEFS = {
-  chochin:  { name: '提灯',     img: ['chochin'],  h: 0.30, zone: 'sky',    layer: 'back',  motion: 'float',   life: 11, at: ['evening','night'] },
-  hitodama: { name: '人玉',     img: ['hitodama'], h: 0.22, zone: 'sky',    layer: 'back',  motion: 'drift',   speed: .55, at: ['night'] },
-  kasa:     { name: 'からかさ', img: ['kasa_body'], rig: 'kasa', parts: ['kasa_body', 'kasa_thigh', 'kasa_shin', 'kasa_boot'], h: 0.52, zone: 'ground', layer: 'front', motion: 'hop',     life: 11, at: ['day'] },
-  usagi:    { name: 'ウサギ',   img: ['rabbit'],   h: 0.30, zone: 'ground', layer: 'front', motion: 'hophop',  life: 10, at: ['morning'] },
-  tanuki:   { name: '狸',       img: ['tanuki'],   h: 0.36, zone: 'edge',   layer: 'front', motion: 'peek',    life: 7.5, at: ['evening'] },
-  kitsune:  { name: '狐',       img: ['kitsune'],  h: 0.34, zone: 'edge',   layer: 'front', motion: 'peek',    life: 7.5, at: ['evening'] },
-  hyakume:  { name: '百目',     img: ['hyakume'],  h: 0.34, zone: 'ground', layer: 'front', motion: 'crawl',   life: 12, at: ['night'] },
-  umibozu:  { name: '海坊主',   img: ['umibozu'],  h: 1.05, zone: 'center', layer: 'back',  motion: 'nyuru',   life: 5.2, at: [] },
-  kappa:    { name: '河童',     img: ['kappa1', 'kappa2', 'kappa3'], h: 0.36, zone: 'ground', layer: 'front', motion: 'walk', life: 11, at: ['morning','evening'] },
-  yellow:   { name: '黄色いの', img: ['yellow'],   h: 0.17, zone: 'ground', layer: 'front', motion: 'slither', speed: .20, at: ['morning'] },
-  wheel:    { name: '車輪',     img: ['wheel'],    h: 0.38, zone: 'ground', layer: 'front', motion: 'spin',    life: 10, at: ['day'] },
-  kuchi:    { name: '口',       img: ['kuchi'],    h: 0.28, zone: 'ground', layer: 'front', motion: 'walk',    life: 11, at: ['day'] },
+  chochin:  { name: '提灯',     img: ['chochin'],  frac: 0.21, zone: 'sky',    layer: 'back',  motion: 'float',   life: 11, at: ['evening','night'] },
+  hitodama: { name: '人玉',     img: ['hitodama'], frac: 0.125, zone: 'sky',    layer: 'back',  motion: 'drift',   speed: .55, at: ['night'] },
+  kasa:     { name: 'からかさ', img: ['kasa_body'], rig: 'kasa', parts: ['kasa_body', 'kasa_thigh', 'kasa_shin', 'kasa_boot'], frac: 0.37, zone: 'ground', layer: 'front', motion: 'hop',     life: 11, at: ['day'] },
+  usagi:    { name: 'ウサギ',   img: ['rabbit'],   frac: 0.19, zone: 'ground', layer: 'front', motion: 'hophop',  life: 10, at: ['morning'] },
+  tanuki:   { name: '狸',       img: ['tanuki'],   frac: 0.27, zone: 'edge',   layer: 'front', motion: 'peek',    life: 7.5, at: ['evening'] },
+  kitsune:  { name: '狐',       img: ['kitsune'],  frac: 0.25, zone: 'edge',   layer: 'front', motion: 'peek',    life: 7.5, at: ['evening'] },
+  hyakume:  { name: '百目',     img: ['hyakume'],  frac: 0.56, zone: 'ground', layer: 'front', motion: 'crawl',   life: 12, at: ['night'] },
+  umibozu:  { name: '海坊主',   img: ['umibozu'],  frac: 0.62, zone: 'center', layer: 'back',  motion: 'nyuru',   life: 5.2, at: [] },
+  kappa:    { name: '河童',     img: ['kappa1', 'kappa2', 'kappa3'], frac: 0.25, zone: 'ground', layer: 'front', motion: 'walk', life: 11, fracBy: { kappa1: 0.155, kappa2: 0.22, kappa3: 0.255 }, at: ['morning','evening'] },
+  yellow:   { name: '黄色いの', img: ['yellow'],   frac: 0.125, zone: 'ground', layer: 'front', motion: 'slither', speed: .20, at: ['morning'] },
+  wheel:    { name: '車輪',     img: ['wheel'],    frac: 0.47, zone: 'ground', layer: 'front', motion: 'spin',    life: 10, at: ['day'] },
+  kuchi:    { name: '口',       img: ['kuchi'],    frac: 0.23, zone: 'ground', layer: 'front', motion: 'walk',    life: 11, at: ['day'] },
 };
 export const IMG_KEYS = [...new Set(Object.values(GUEST_DEFS).flatMap((d) => [...d.img, ...(d.parts || [])]))];
 
@@ -83,13 +83,12 @@ const MOT = {
       const x = p / A;
       g.y = g.H * 0.55 * 4 * x * (1 - x);
       g.sy = 1 + 0.18 * Math.sin(Math.PI * x); g.sx = 1 - 0.1 * Math.sin(Math.PI * x);
-      g.s += g.dir * 0.3 * g.hw * dt;
+      g.s = g.s0 + 0.03 * g.hw * Math.sin(u * 3);
     } else {
       const q = (p - A) / (1 - A);
       g.sy = 1 - 0.24 * Math.sin(Math.PI * q); g.sx = 1 + 0.15 * Math.sin(Math.PI * q);
     }
     g.rz = 0.1 * Math.sin(u * 7.4) * (p < A ? 1 : 0);
-    bounceEdge(g);
   },
   hophop(g, u, dt) {                             // ぴょこぴょこ×3、ひと休み
     const T = 2.2, t = u % T;
@@ -97,22 +96,19 @@ const MOT = {
       const x = (t / 0.4) % 1;
       g.y = g.H * 0.35 * 4 * x * (1 - x);
       g.sy = 1 + 0.12 * Math.sin(Math.PI * x); g.sx = 1 - 0.06 * Math.sin(Math.PI * x);
-      g.s += g.dir * 0.2 * g.hw * dt;
+      g.s = g.s0 + 0.03 * g.hw * Math.sin(u * 2.4);
     } else { g.sy = 1 + 0.02 * Math.sin(u * 6); }
-    bounceEdge(g);
   },
   walk(g, u, dt) {                               // てくてく
-    g.s += g.dir * 0.12 * g.hw * dt;
+    g.s = g.s0 + 0.06 * g.hw * Math.sin(u * 1.1 + g.ph);
     g.y = g.H * 0.06 * Math.abs(Math.sin(TAU * 0.9 * u * 2 + g.ph));
     g.rz = 0.08 * Math.sin(TAU * 0.9 * u + g.ph);
-    bounceEdge(g);
   },
   crawl(g, u, dt) {                              // のし…のし…と這う
-    g.s += g.dir * 0.06 * g.hw * dt;
+    g.s = g.s0 + 0.05 * g.hw * Math.sin(u * 0.7 + g.ph);
     const w = Math.sin(TAU * 0.8 * u + g.ph);
     g.sx = 1 + 0.08 * w; g.sy = 1 - 0.07 * w;
     g.rz = 0.025 * Math.sin(TAU * 0.4 * u);
-    bounceEdge(g);
   },
   slither(g, u, dt) {                            // 蛇のように画面の下を横切る(体の波は update で)
     const e = g.hw + g.W * 0.6;
@@ -120,11 +116,10 @@ const MOT = {
     g.wave = u;
   },
   spin(g, u, dt) {                               // くるくる回りながら転がる
-    g.s += g.dir * 0.25 * g.hw * dt;
+    g.s = g.s0 + 0.05 * g.hw * Math.sin(u * 1.3);
     g.ang = (g.ang || 0) - g.dir * 5.2 * dt;
     g.rz = g.ang;
     g.y = g.H * 0.08 * Math.abs(Math.sin(TAU * 1.4 * u));
-    bounceEdge(g);
   },
   startle(g, u) {                                // わっ! と大きく飛び出す
     const k = back(u / 0.32);
@@ -148,10 +143,9 @@ const MOT = {
     const IN = 1.4, OUT = 1.2, edge = g.hw + g.W * 0.6, rest = g.hw - g.W * 0.12 - g.W * (g.inner || 0);      // 体の6〜7割だけ見せて、端にとどまる(innerで内側へずらす)
     let r;
     if (u < IN) r = edge + (rest - edge) * ease(u / IN);
-    else if (u > g.L - OUT) r = rest + (edge - rest) * ease((u - (g.L - OUT)) / OUT);
     else r = rest;
     g.s = g.side * r;
-    const moving = u < IN || u > g.L - OUT;
+    const moving = u < IN;
     g.y = g.H * (moving ? 0.07 * Math.abs(Math.sin(u * 11 + g.ph)) : 0.04 * Math.abs(Math.sin(u * 5 + g.ph)));
     g.rz = (moving ? 0.1 : 0.13) * Math.sin(u * (moving ? 11 : 5) + g.ph);
     if (!moving) g.sy = 1 + 0.04 * Math.sin(u * 8 + g.ph);
@@ -188,14 +182,18 @@ export class Guest {
     this.c = a.c; this.right = a.right; this.hw = a.hw; this.k = a.k;
     if (opt.ny != null && a.d) this.c.y = opt.ny * a.d * a.th;      // 自撮りでは、足元の高さ(画面の位置)を指定できる
     this.inner = opt.inner || 0;
-    this.H = def.h * a.k; this.aspect = def.rig ? KASA.w / KASA.h : tex.image.width / tex.image.height; this.W = this.H * this.aspect;
+    const fr = (def.fracBy && opt.img && def.fracBy[opt.img]) || def.frac;
+    this.H = fr * 2 * a.d * a.th; this.aspect = def.rig ? KASA.w / KASA.h : tex.image.width / tex.image.height; this.W = this.H * this.aspect;
     this.dir = opt.dir || (Math.random() < 0.5 ? -1 : 1); this.side = opt.side || this.dir;
     this.ph = opt.ph != null ? opt.ph : Math.random() * TAU;
     this.s0 = (opt.s0 || 0) * this.hw; this.s = this.s0;
     if (def.zone === 'center' && opt.xc != null) { this.s0 = this.s = opt.xc * this.hw; }
     if (def.motion === 'hop' || def.motion === 'hophop' || def.motion === 'walk' || def.motion === 'crawl' || def.motion === 'spin') this.s = this.s0 = (opt.s0 != null ? opt.s0 : (Math.random() * 1.2 - 0.6)) * this.hw;
     this.y = 0; this.sx = 1; this.sy = 1; this.rz = 0; this.u = -(opt.delay || 0);
-    this.L = def.life || (2 * (this.hw + this.W * 0.7)) / ((def.speed || 0.3) * this.hw);
+    this.cross = def.motion === 'drift' || def.motion === 'slither';
+    this.cycle = this.cross ? (2 * (this.hw + this.W * 0.7)) / ((def.speed || 0.3) * this.hw) : 0;
+    this.L = def.motion === 'nyuru' ? def.life : (this.cross ? this.cycle : 1e9);
+    this.leaveAt = null;
     this.wave = 0;
 
     this.group = new THREE.Group();
@@ -255,15 +253,18 @@ export class Guest {
     this.u += dt;
     const u = this.u;
     if (u < 0) return;
+    if (this.cross && u > this.L) { this.u = -(2.5 + Math.random() * 2); return; }      // 横切るおばけは、少し間をおいてまた通る
     if (u > this.L) { this.dispose(); return; }
+    if (this.leaveAt != null && u > this.leaveAt + 0.4) { this.dispose(); return; }
     this.group.visible = true;
     this.sx = 1; this.sy = 1; this.rz = 0; this.y = 0;
     const keepS = this.def.motion;
     MOT[keepS](this, u, dt);
 
-    const env = ease(u / 0.35) * ease((this.L - u) / 0.45);
+    const lv = this.leaveAt != null ? 1 - clamp01((u - this.leaveAt) / 0.4) : 1;
+    const env = ease(u / 0.35) * ease((this.L - u) / 0.45) * lv;
     const popK = (this.def.motion === 'startle' || this.def.motion === 'nyuru') ? 1 : 0.35 + 0.65 * env;
-    const alpha = (this.def.motion === 'startle' || this.def.motion === 'nyuru') ? Math.min(1, u / 0.08) : (this.def.motion === 'drift' || this.def.motion === 'slither' ? 1 : env);
+    const alpha = (this.def.motion === 'startle' || this.def.motion === 'nyuru') ? Math.min(1, u / 0.08) * lv : (this.def.motion === 'drift' || this.def.motion === 'slither' ? lv : env);
     this.mat.opacity = alpha;
     this.mat.color.setScalar(this.ctx.lightMul());
 
@@ -293,6 +294,7 @@ export class Guest {
       this.shadowMat.opacity = 0.4 * env * (1 - 0.55 * air);
     }
   }
+  leave() { if (this.leaveAt == null) this.leaveAt = Math.max(this.u, 0); }
   poke() { if (this.def.motion === 'hop' || this.def.motion === 'hophop') this.u += 0.2; }
   dispose() {
     if (this.dead) return;
