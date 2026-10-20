@@ -1,6 +1,6 @@
 import * as THREE from './three.module.min.js';
-import { D0, GUEST_DEFS, IMG_KEYS, Guest, pickByTime } from './actors.js?v=4';
-import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=4';
+import { D0, GUEST_DEFS, IMG_KEYS, Guest, pickByTime, BANDS, GESTURES, period } from './actors.js?v=5';
+import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=5';
 
 /* ============================================================
    Monster AR  v4
@@ -105,7 +105,6 @@ function setSegActive(on) {
 let lastGesture = 0;
 const gestures = new Gestures((name) => triggerGesture(name));
 const motionEn = new MotionEnergy(video);
-const GESTURE_NAMES = { raise: '両手を上げた', close: '近づいた', sway: '左右にゆれた', move: '大きく動いた' };
 function triggerGesture(name) {
   if (!started || recordingBusy()) return;
   const alive = guests.filter((g) => !g.dead).length;
@@ -142,6 +141,30 @@ const ctx = {
   order: (layer) => (isFront() ? (layer === 'front' ? 30 : 10) : 10),
 };
 
+
+/* ---------- ホーム画面の「出てくる条件」 ---------- */
+const thumb = (key) => `y_${GUEST_DEFS[key].img[0]}.png?v=5`;
+function figure(key, label) {
+  return `<figure><div class="th"><img src="${thumb(key)}" alt="" loading="lazy"></div><figcaption>${label || GUEST_DEFS[key].name}</figcaption></figure>`;
+}
+function buildMenu() {
+  const now = period();
+  const names = (list) => list.filter((k) => k !== 'kitsune').map((k) => (k === 'tanuki' ? figure('tanuki', '狸と狐') : figure(k))).join('');
+  let h = `<section><h2>時間で出てくる(自動)</h2><p class="note">端末の時計で、いまの時間帯のおばけが、ときどき1〜2体ずつ入れかわりで出ます。</p>`;
+  for (const [id, b] of Object.entries(BANDS)) {
+    const list = Object.keys(GUEST_DEFS).filter((k) => GUEST_DEFS[k].at.includes(id));
+    h += `<div class="row${id === now ? ' now' : ''}"><div class="lab"><b>${b.label}${id === now ? '<i>いま</i>' : ''}</b><span>${b.text}</span></div><div class="yk">${names(list)}</div></div>`;
+  }
+  h += `</section><section><h2>動きで呼べる(いつでも)</h2><p class="note">時間に関係なく、その動きをすると出てきます。</p>`;
+  for (const g of GESTURES) {
+    const who = g.yokai.length ? names(g.yokai) : '<span class="note">いまの時間帯のおばけが1体</span>';
+    h += `<div class="row"><div class="lab"><b>${g.label}</b><span>${g.where}</span></div><div class="yk">${who}</div></div>`;
+  }
+  h += `</section><section><h2>いつもいる</h2><div class="row"><div class="lab"><b>おに</b><span>3匹</span></div><div class="yk"><figure><div class="th"><img src="r_2.png" alt=""></div><figcaption>赤</figcaption></figure><figure><div class="th"><img src="b_3.png" alt=""></div><figcaption>青</figcaption></figure><figure><div class="th"><img src="g_2.png" alt=""></div><figcaption>緑</figcaption></figure></div></div></section>`;
+  $('#menuBody').innerHTML = h;
+}
+buildMenu();
+
 /* ---------- ゲストを出す ---------- */
 function spawnGuest(key, opt = {}) {
   const def = GUEST_DEFS[key];
@@ -151,11 +174,13 @@ function spawnGuest(key, opt = {}) {
   const imgKey = def.img[Math.floor(Math.random() * def.img.length)];
   const tex = gtex[imgKey];
   if (!tex || alive + n > MAX_GUESTS + 2) return null;
+  if (def.parts && !def.parts.every((p) => gtex[p])) return null;     // 部品がそろってから出す
   const made = [];
   for (let i = 0; i < n; i++) {
     const o = { ...opt, delay: i * 0.45 };
     if (key === 'chochin') { o.s0 = (i - (n - 1) / 2) * 0.6 + (Math.random() - 0.5) * 0.15; o.ph = i * 2.1; }
     if (key === 'umibozu') o.xc = headNdc ? THREE.MathUtils.clamp(headNdc.x + (Math.random() < 0.5 ? -0.5 : 0.5), -0.7, 0.7) : 0;
+    if (def.parts) o.parts = gtex;
     const g = new Guest(ctx, key, tex, o);
     guests.push(g); made.push(g);
   }
@@ -716,7 +741,7 @@ async function loadAll() {
 }
 function loadGuestTextures() {            // 起動後に裏で読み込む(待たせない)
   const loader = new THREE.TextureLoader(), aniso = renderer.capabilities.getMaxAnisotropy();
-  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=4`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
+  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=5`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
 }
 
 async function start(want) {
@@ -753,7 +778,7 @@ $('#startOther').onclick = () => start('rear');
 window.__ar = {
   setOrientation(a, b, g) { gyro.alpha = a; gyro.beta = b; gyro.gamma = g; gyro.has = true; },
   spawn: (k) => spawnGuest(k), pair: () => spawnPair(), gesture: (n) => triggerGesture(n),
-  feed(f) { onMask(f); }, seg, personMat, personMesh, setSeg(on) { seg.ready = true; setSegActive(on); },
+  feed(f) { onMask(f); }, scene, seg, personMat, personMesh, setSeg(on) { seg.ready = true; setSegActive(on); },
   get guests() { return guests.map((g) => ({ k: g.key, s: +g.s.toFixed(2), u: +g.u.toFixed(1), dead: g.dead })); },
   get mons() { return mons.map((m) => ({ nx: +m.nx.toFixed(2), ny: +m.ny.toFixed(2), x: m.pos.x, z: m.pos.z })); },
   get state() { return { started, mode, facing, fov: camera.fov, segActive, headNdc, seen: [...seen], gtex: Object.keys(gtex) }; },
