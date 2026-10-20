@@ -333,7 +333,7 @@ class Mon {
     this.group = new THREE.Group();
     this.mat = new THREE.MeshBasicMaterial({ map: this.tex[1], transparent: true, depthWrite: false, depthTest: false });
     this.body = new THREE.Mesh(bodyGeo, this.mat);
-    this.body.renderOrder = 10; this.body.userData.mon = this;
+    this.body.renderOrder = 30; this.body.userData.mon = this;
     this.shadowMat = new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, depthTest: false });
     this.shadow = new THREE.Mesh(flatGeo, this.shadowMat);
     this.shadow.position.y = 0.004; this.shadow.renderOrder = 4;
@@ -463,10 +463,10 @@ function defaultHomes() {
 }
 function updateHomes() {
   if (!isFront()) return;
-  const clampX = (x) => Math.max(-0.46, Math.min(0.46, x));     // 端(|x|>0.6)は、端から出てくるおばけ用にあけておく
+  const clampX = (x) => Math.max(-0.5, Math.min(0.5, x));     // 端(|x|>0.6)は、端から出てくるおばけ用にあけておく
   if (headNdc && segActive) {
     const { x, y } = headNdc;
-    const homes = [[x - 0.45, y - 0.55], [x + 0.45, y - 0.55], [x + 0.02, y - 0.1]];
+    const homes = [[x - 0.5, y - 0.62], [x + 0.5, y - 0.62], [x + 0.02, y + 0.03]];
     mons.forEach((m, i) => { m.hx = clampX(homes[i][0]); m.hy = Math.max(-0.9, Math.min(0.85, homes[i][1])); });
   } else {
     const h = defaultHomes();
