@@ -1,6 +1,6 @@
 import * as THREE from './three.module.min.js';
-import { D0, GUEST_DEFS, IMG_KEYS, Guest, pickByTime, BANDS, GESTURES, period } from './actors.js?v=6';
-import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=6';
+import { D0, GUEST_DEFS, IMG_KEYS, Guest, pickByTime, BANDS, GESTURES, period } from './actors.js?v=7';
+import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=7';
 
 /* ============================================================
    Monster AR  v4
@@ -18,7 +18,7 @@ const VIDEO_VFOV = 63, VFOV_FRONT = 66;
 const POSE_SEQ = [1, 2, 3, 2], POSE_FPS = 5, MOVE_SPEED = 1.1;
 const ONI = ['r', 'b', 'g'];
 const BACK_D = 2.2, FRONT_D = 1.15;       // 自撮りでの奥行き(人の後ろ/前)
-const MAX_GUESTS = 5;
+const MAX_GUESTS = 4;
 
 const $ = (s) => document.querySelector(s);
 const video = $('#cam'), glCanvas = $('#gl'), statusEl = $('#status'), hintEl = $('#hint');
@@ -108,7 +108,7 @@ const motionEn = new MotionEnergy(video);
 function triggerGesture(name) {
   if (!started || recordingBusy()) return;
   const alive = guests.filter((g) => !g.dead).length;
-  if (alive >= MAX_GUESTS + 2) return;
+  if (alive >= MAX_GUESTS + 1) return;
   lastGesture = performance.now();
   if (name === 'raise') { spawnGuest('chochin'); if (Math.random() < 0.6) spawnGuest('hitodama'); }
   else if (name === 'close') spawnGuest('umibozu');
@@ -128,7 +128,7 @@ function anchor(zone, layer) {
   if (isFront()) {
     const d = zone === 'center' ? 2.3 : zone === 'sky' ? 2.4 : layer === 'front' ? FRONT_D : BACK_D;
     const ny = { ground: -0.80, sky: 0.55, center: -1.0, edge: -0.50 }[zone];
-    return { c: new THREE.Vector3(0, ny * d * th, -d), right: new THREE.Vector3(1, 0, 0), hw: d * th * camera.aspect, k: d / D0 };
+    return { c: new THREE.Vector3(0, ny * d * th, -d), right: new THREE.Vector3(1, 0, 0), hw: d * th * camera.aspect, k: d / D0, d, th };
   }
   camera.getWorldDirection(_f); _f.y = 0;
   if (_f.lengthSq() < 1e-4) _f.set(0, 0, -1);
@@ -143,7 +143,7 @@ const ctx = {
 
 
 /* ---------- ホーム画面の「出てくる条件」 ---------- */
-const thumb = (key) => `y_${GUEST_DEFS[key].img[0]}.png?v=6`;
+const thumb = (key) => `y_${GUEST_DEFS[key].img[0]}.png?v=7`;
 function figure(key, label) {
   return `<figure><div class="th"><img src="${thumb(key)}" alt="" loading="lazy"></div><figcaption>${label || GUEST_DEFS[key].name}</figcaption></figure>`;
 }
@@ -178,6 +178,81 @@ function freeSlot(zone) {
   return best;
 }
 
+
+/* ---------- 当たり判定(キャラどうしを絶対に重ねない) ----------
+   自撮り: 画面上(NDC)の四角で判定し、重なったら軽いほうを横へ押しのける。重いのは 海坊主 > おに > おばけ
+   外カメ: 床の上の円で判定する */
+const MASS = (a) => (a.def && a.def.motion === 'nyuru' ? 6 : a.def ? 1 : 3);
+function allActors() { return [...mons, ...guests.filter((g) => !g.dead && g.u >= 0)]; }
+function boxOf(a) {
+  const th = Math.tan(camera.fov * DEG / 2), d = Math.max(0.3, -a.group.position.z);
+  const isMon = !a.def;
+  const bw = isMon ? Math.abs(a.body.scale.x) : a.bw, bh = isMon ? a.body.scale.y : a.bh;
+  const lift = isMon ? a.body.position.y : a.y;
+  const sx = d * th * camera.aspect, sy = d * th;
+  return { x: a.group.position.x / sx, y: (a.group.position.y + lift + bh / 2) / sy, hx: bw / 2 / sx * 0.72, hy: bh / 2 / sy * 0.85, sx, sy };
+}
+function resolveCollisions(dt) {
+  const acts = allActors();
+  for (const a of acts) if (!a.sep) { a.sep = new THREE.Vector3(); a.sepGoal = new THREE.Vector3(); }
+  if (isFront()) {
+    const it = acts.map((a) => ({ a, ...boxOf(a), px: 0, py: 0, m: MASS(a), free: a.def && ['peek', 'drift', 'slither', 'nyuru'].includes(a.def.motion) }));
+    for (let k = 0; k < 12; k++) {
+      for (let i = 0; i < it.length; i++) for (let j = i + 1; j < it.length; j++) {
+        const A = it[i], B = it[j];
+        const dx = (A.x + A.px) - (B.x + B.px), dy = (A.y + A.py) - (B.y + B.py);
+        const ox = A.hx + B.hx - Math.abs(dx), oy = A.hy + B.hy - Math.abs(dy);
+        if (ox <= 0 || oy <= 0) continue;
+        const wa = B.m / (A.m + B.m), wb = A.m / (A.m + B.m);
+        if (ox < oy * 1.6) { const s = dx >= 0 ? 1 : -1; A.px += s * ox * wa; B.px -= s * ox * wb; }
+        else { const s = dy >= 0 ? 1 : -1; A.py += s * oy * wa; B.py -= s * oy * wb; }
+      }
+      for (const A of it) {                       // 画面の外へ押し出されない(端から出るおばけは除く)
+        if (A.free) continue;
+        const cx = A.x + A.px, cy = A.y + A.py, mx = 1 - A.hx, my = 1 - A.hy;
+        if (cx > mx) A.px -= cx - mx; else if (cx < -mx) A.px -= cx + mx;
+        if (cy > my) A.py -= cy - my; else if (cy < -my) A.py -= cy + my;
+      }
+    }
+    for (const A of it) A.a.sepGoal.set(A.px * A.sx, A.py * A.sy, 0);
+  } else {
+    const gr = acts.filter((a) => !(a.def && a.def.zone === 'sky'));
+    const it = gr.map((a) => ({ a, x: a.group.position.x, z: a.group.position.z, r: (a.def ? a.W : BASE_H * SPRITE_ASPECT * a.sizeK) * 0.34, m: MASS(a), px: 0, pz: 0 }));
+    for (let k = 0; k < 4; k++) for (let i = 0; i < it.length; i++) for (let j = i + 1; j < it.length; j++) {
+      const A = it[i], B = it[j];
+      let dx = (A.x + A.px) - (B.x + B.px), dz = (A.z + A.pz) - (B.z + B.pz);
+      const dist = Math.hypot(dx, dz) || 1e-4, o = A.r + B.r - dist;
+      if (o <= 0) continue;
+      dx /= dist; dz /= dist;
+      A.px += dx * o * B.m / (A.m + B.m); A.pz += dz * o * B.m / (A.m + B.m);
+      B.px -= dx * o * A.m / (A.m + B.m); B.pz -= dz * o * A.m / (A.m + B.m);
+    }
+    for (const a of acts) a.sepGoal.set(0, 0, 0);
+    for (const A of it) A.a.sepGoal.set(A.px, 0, A.pz);
+  }
+  const k = 1 - Math.exp(-dt * 30);
+  for (const a of acts) { a.sep.lerp(a.sepGoal, k); a.group.position.add(a.sep); }
+}
+
+/* 新しく出すおばけの場所: いるキャラから、いちばん離れた所を選ぶ(自撮りのみ。外カメは床の上で後から押しのける) */
+function chooseSpot(def, sideHint) {
+  if (!isFront()) return null;
+  const a = anchor(def.zone, def.layer), H = def.h * a.k;
+  const hx = (H * 0.8 / 2) / a.hw * 0.72, hy = (H / 2) / (a.d * a.th) * 0.85;
+  const others = allActors().map(boxOf);
+  const RANGE = { ground: [-0.84, -0.66], sky: [0.35, 0.78], edge: [-0.65, 0.4] }[def.zone] || [-1, -1];
+  let best = null;
+  for (let i = 0; i < 28; i++) {
+    const side = sideHint || (Math.random() < 0.5 ? -1 : 1);
+    const ny = RANGE[0] + Math.random() * (RANGE[1] - RANGE[0]);
+    const s = def.zone === 'edge' ? side * 0.93 : Math.random() * 1.4 - 0.7;
+    const cy = ny + hy;
+    const score = others.length ? Math.min(...others.map((o) => Math.max(Math.abs(s - o.x) - (hx + o.hx), Math.abs(cy - o.y) - (hy + o.hy)))) : 1;
+    if (!best || score > best.score) best = { s, ny, side, score };
+  }
+  return best;
+}
+
 /* ---------- ゲストを出す ---------- */
 function spawnGuest(key, opt = {}) {
   const def = GUEST_DEFS[key];
@@ -186,16 +261,22 @@ function spawnGuest(key, opt = {}) {
   const n = key === 'chochin' ? 2 + (Math.random() < 0.5 ? 1 : 0) : key === 'hitodama' ? 1 + (Math.random() < 0.5 ? 1 : 0) : 1;
   const imgKey = def.img[Math.floor(Math.random() * def.img.length)];
   const tex = gtex[imgKey];
-  if (!tex || alive + n > MAX_GUESTS + 2) return null;
+  if (!tex || alive + n > MAX_GUESTS + 1) return null;
   if (def.parts && !def.parts.every((p) => gtex[p])) return null;     // 部品がそろってから出す
   const made = [];
-  let baseSlot = 0;
+  let spot = null;
   for (let i = 0; i < n; i++) {
     const o = { ...opt, delay: i * 0.45 };
-    if (i === 0 && ['float', 'hop', 'hophop', 'walk', 'crawl', 'spin'].includes(def.motion)) baseSlot = freeSlot(def.zone);
-    if (def.motion === 'float') { o.s0 = Math.max(-0.75, Math.min(0.75, baseSlot + (i - (n - 1) / 2) * 0.5)); o.ph = i * 2.1; }
-    else if (['hop', 'hophop', 'walk', 'crawl', 'spin'].includes(def.motion)) o.s0 = baseSlot;
-    if (key === 'umibozu') o.xc = headNdc ? THREE.MathUtils.clamp(headNdc.x + (Math.random() < 0.5 ? -0.5 : 0.5), -0.7, 0.7) : 0;
+    if (i === 0) spot = chooseSpot(def, opt.side);
+    if (spot && key !== 'umibozu' && spot.score < -0.12 && def.motion !== 'peek') return null;     // すき間がなければ出さない
+    if (def.motion === 'float') { const base = spot ? spot.s : freeSlot(def.zone); o.s0 = Math.max(-0.75, Math.min(0.75, base + (i - (n - 1) / 2) * 0.45)); o.ph = i * 2.1; if (spot) o.ny = spot.ny + i * 0.05; }
+    else if (['hop', 'hophop', 'walk', 'crawl', 'spin'].includes(def.motion)) { o.s0 = spot ? spot.s : freeSlot(def.zone); if (spot) o.ny = spot.ny; }
+    else if (def.motion === 'slither' || def.motion === 'drift') { if (spot) o.ny = spot.ny; }
+    else if (def.motion === 'peek') { if (spot) { o.ny = spot.ny; o.side = spot.side; o.dir = spot.side; } }
+    if (key === 'umibozu') {                                  // 人の肩のうしろ(空いている側)から
+      const sd = headNdc ? (headNdc.x > 0 ? -1 : 1) : (Math.random() < 0.5 ? -1 : 1);
+      o.side = sd; o.xc = headNdc ? THREE.MathUtils.clamp(headNdc.x + sd * 0.62, -0.78, 0.78) : sd * 0.62;
+    }
     if (def.parts) o.parts = gtex;
     const g = new Guest(ctx, key, tex, o);
     guests.push(g); made.push(g);
@@ -205,10 +286,12 @@ function spawnGuest(key, opt = {}) {
   return made;
 }
 function spawnPair() {
-  const side = Math.random() < 0.5 ? -1 : 1;
   if (!gtex.tanuki || !gtex.kitsune) return;
-  guests.push(new Guest(ctx, 'tanuki', gtex.tanuki, { side, dir: side }));
-  guests.push(new Guest(ctx, 'kitsune', gtex.kitsune, { side, dir: side, delay: 0.5, ph: 1.7 }));
+  const spot = chooseSpot(GUEST_DEFS.tanuki);
+  if (spot && spot.score < -0.12) return;
+  const side = spot ? spot.side : (Math.random() < 0.5 ? -1 : 1), ny = spot ? spot.ny : undefined;
+  guests.push(new Guest(ctx, 'tanuki', gtex.tanuki, { side, dir: side, ny }));
+  guests.push(new Guest(ctx, 'kitsune', gtex.kitsune, { side, dir: side, delay: 0.5, ph: 1.7, ny: ny != null ? ny + 0.1 : ny, inner: 1.0 }));
   seen.add('tanuki'); seen.add('kitsune'); updateCount();
   toast('狸と狐が出てきた');
 }
@@ -674,8 +757,9 @@ function frame(now) {
   camera.getWorldDirection(_f);
   _right.set(-_f.z, 0, _f.x).normalize();
   updateHomes();
-  for (const m of mons) m.update(dt, animT, _right);
+  for (const m of mons) { if (m.sep) m.pos.sub(m.sep); m.update(dt, animT, _right); }
   for (let i = guests.length - 1; i >= 0; i--) { const g = guests[i]; if (!paused) g.update(dt); if (g.dead) guests.splice(i, 1); }
+  resolveCollisions(dt);
   sampleLight(now);
 
   // 動きの検出: 切り抜きが使えるときは seg 側、そうでなければ映像の変化量
@@ -757,7 +841,7 @@ async function loadAll() {
 }
 function loadGuestTextures() {            // 起動後に裏で読み込む(待たせない)
   const loader = new THREE.TextureLoader(), aniso = renderer.capabilities.getMaxAnisotropy();
-  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=6`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
+  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=7`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
 }
 
 async function start(want) {
@@ -795,6 +879,7 @@ window.__ar = {
   setOrientation(a, b, g) { gyro.alpha = a; gyro.beta = b; gyro.gamma = g; gyro.has = true; },
   spawn: (k) => spawnGuest(k), pair: () => spawnPair(), gesture: (n) => triggerGesture(n),
   feed(f) { onMask(f); }, scene, seg, personMat, personMesh, setSeg(on) { seg.ready = true; setSegActive(on); },
+  overlaps() { const ac = allActors(), det = []; const it = ac.map(boxOf); let mx = 0, n = 0; for (let i = 0; i < it.length; i++) for (let j = i + 1; j < it.length; j++) { const A = it[i], B = it[j]; const ox = A.hx + B.hx - Math.abs(A.x - B.x), oy = A.hy + B.hy - Math.abs(A.y - B.y); if (ox > 0 && oy > 0) { mx = Math.max(mx, Math.min(ox, oy)); n++; det.push([ac[i].key || ac[i].id, ac[j].key || ac[j].id, +Math.min(ox, oy).toFixed(2), +A.x.toFixed(2), +A.y.toFixed(2), +B.x.toFixed(2), +B.y.toFixed(2)]); } } return { max: +mx.toFixed(3), pairs: n, actors: it.length, det }; },
   get guests() { return guests.map((g) => ({ k: g.key, s: +g.s.toFixed(2), u: +g.u.toFixed(1), dead: g.dead })); },
   get mons() { return mons.map((m) => ({ nx: +m.nx.toFixed(2), ny: +m.ny.toFixed(2), x: m.pos.x, z: m.pos.z })); },
   get state() { return { started, mode, facing, fov: camera.fov, segActive, headNdc, seen: [...seen], gtex: Object.keys(gtex) }; },

@@ -19,7 +19,7 @@ export const GUEST_DEFS = {
   tanuki:   { name: '狸',       img: ['tanuki'],   h: 0.36, zone: 'edge',   layer: 'front', motion: 'peek',    life: 7.5, at: ['evening'] },
   kitsune:  { name: '狐',       img: ['kitsune'],  h: 0.34, zone: 'edge',   layer: 'front', motion: 'peek',    life: 7.5, at: ['evening'] },
   hyakume:  { name: '百目',     img: ['hyakume'],  h: 0.34, zone: 'ground', layer: 'front', motion: 'crawl',   life: 12, at: ['night'] },
-  umibozu:  { name: '海坊主',   img: ['umibozu'],  h: 1.30, zone: 'center', layer: 'back',  motion: 'startle', life: 4.6, at: [] },
+  umibozu:  { name: '海坊主',   img: ['umibozu'],  h: 1.05, zone: 'center', layer: 'back',  motion: 'nyuru',   life: 5.2, at: [] },
   kappa:    { name: '河童',     img: ['kappa1', 'kappa2', 'kappa3'], h: 0.36, zone: 'ground', layer: 'front', motion: 'walk', life: 11, at: ['morning','evening'] },
   yellow:   { name: '黄色いの', img: ['yellow'],   h: 0.17, zone: 'ground', layer: 'front', motion: 'slither', speed: .20, at: ['morning'] },
   wheel:    { name: '車輪',     img: ['wheel'],    h: 0.38, zone: 'ground', layer: 'front', motion: 'spin',    life: 10, at: ['day'] },
@@ -134,8 +134,18 @@ const MOT = {
     g.sx *= 1 + 0.02 * Math.sin(2.6 * u); g.sy *= 1 - 0.02 * Math.sin(2.6 * u);
     g.rz = 0.05 * Math.sin(60 * u) * Math.exp(-4 * u);
   },
+  nyuru(g, u) {                                  // 肩のうしろから、にゅるっと伸びて出てくる
+    const RISE = 0.75, SINK = 0.9;
+    const r = u < RISE ? back(u / RISE) : 1;
+    const out = clamp01((u - (g.L - SINK)) / SINK);
+    g.y = -g.H * 0.95 * (1 - Math.min(r, 1.04)) - g.H * 0.8 * ease(out);
+    const stretch = u < RISE ? Math.sin(Math.PI * (u / RISE)) : 0;
+    g.sy = 1 + 0.28 * stretch + 0.015 * Math.sin(2.4 * u);
+    g.sx = 1 - 0.14 * stretch - 0.015 * Math.sin(2.4 * u);
+    g.rz = (g.side || 1) * (-0.10 * stretch) + 0.035 * Math.sin(1.8 * u);
+  },
   peek(g, u) {                                   // 画面の端からひょこひょこ
-    const IN = 1.4, OUT = 1.2, edge = g.hw + g.W * 0.6, rest = g.hw - g.W * 0.12;      // 体の6〜7割だけ見せて、端にとどまる
+    const IN = 1.4, OUT = 1.2, edge = g.hw + g.W * 0.6, rest = g.hw - g.W * 0.12 - g.W * (g.inner || 0);      // 体の6〜7割だけ見せて、端にとどまる(innerで内側へずらす)
     let r;
     if (u < IN) r = edge + (rest - edge) * ease(u / IN);
     else if (u > g.L - OUT) r = rest + (edge - rest) * ease((u - (g.L - OUT)) / OUT);
@@ -176,6 +186,8 @@ export class Guest {
     this.ctx = ctx; this.key = key; this.def = def; this.dead = false;
     const a = ctx.anchor(def.zone, def.layer);
     this.c = a.c; this.right = a.right; this.hw = a.hw; this.k = a.k;
+    if (opt.ny != null && a.d) this.c.y = opt.ny * a.d * a.th;      // 自撮りでは、足元の高さ(画面の位置)を指定できる
+    this.inner = opt.inner || 0;
     this.H = def.h * a.k; this.aspect = def.rig ? KASA.w / KASA.h : tex.image.width / tex.image.height; this.W = this.H * this.aspect;
     this.dir = opt.dir || (Math.random() < 0.5 ? -1 : 1); this.side = opt.side || this.dir;
     this.ph = opt.ph != null ? opt.ph : Math.random() * TAU;
@@ -250,13 +262,14 @@ export class Guest {
     MOT[keepS](this, u, dt);
 
     const env = ease(u / 0.35) * ease((this.L - u) / 0.45);
-    const popK = this.def.motion === 'startle' ? 1 : 0.35 + 0.65 * env;
-    const alpha = this.def.motion === 'startle' ? Math.min(1, u / 0.08) : (this.def.motion === 'drift' || this.def.motion === 'slither' ? 1 : env);
+    const popK = (this.def.motion === 'startle' || this.def.motion === 'nyuru') ? 1 : 0.35 + 0.65 * env;
+    const alpha = (this.def.motion === 'startle' || this.def.motion === 'nyuru') ? Math.min(1, u / 0.08) : (this.def.motion === 'drift' || this.def.motion === 'slither' ? 1 : env);
     this.mat.opacity = alpha;
     this.mat.color.setScalar(this.ctx.lightMul());
 
     const H = this.H * this.sy * popK, W = this.H * this.aspect * this.sx * popK;
     const hc = H / 2;
+    this.bw = W; this.bh = H;
     this.group.position.copy(this.c).addScaledVector(this.right, this.s);
     this.group.rotation.y = Math.atan2(-this.group.position.x, -this.group.position.z);
     if (this.rig) this.updateRig(popK, alpha);
