@@ -1,6 +1,6 @@
 import * as THREE from './three.module.min.js';
-import { D0, GUEST_DEFS, IMG_KEYS, Guest, pickByTime, BANDS, GESTURES, period } from './actors.js?v=5';
-import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=5';
+import { D0, GUEST_DEFS, IMG_KEYS, Guest, pickByTime, BANDS, GESTURES, period } from './actors.js?v=6';
+import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=6';
 
 /* ============================================================
    Monster AR  v4
@@ -143,7 +143,7 @@ const ctx = {
 
 
 /* ---------- ホーム画面の「出てくる条件」 ---------- */
-const thumb = (key) => `y_${GUEST_DEFS[key].img[0]}.png?v=5`;
+const thumb = (key) => `y_${GUEST_DEFS[key].img[0]}.png?v=6`;
 function figure(key, label) {
   return `<figure><div class="th"><img src="${thumb(key)}" alt="" loading="lazy"></div><figcaption>${label || GUEST_DEFS[key].name}</figcaption></figure>`;
 }
@@ -165,6 +165,19 @@ function buildMenu() {
 }
 buildMenu();
 
+
+/* 同じ高さにいるおばけと、なるべく離れた横位置を選ぶ(-0.7〜0.7、画面の半幅に対する割合) */
+function freeSlot(zone) {
+  const others = guests.filter((g) => !g.dead && g.u > -0.5 && g.def.zone === zone).map((g) => g.s / g.hw);
+  let best = 0, bestD = -1;
+  for (let i = 0; i < 12; i++) {
+    const c = Math.random() * 1.4 - 0.7;
+    const d = others.length ? Math.min(...others.map((o) => Math.abs(o - c))) : 1;
+    if (d > bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+
 /* ---------- ゲストを出す ---------- */
 function spawnGuest(key, opt = {}) {
   const def = GUEST_DEFS[key];
@@ -176,9 +189,12 @@ function spawnGuest(key, opt = {}) {
   if (!tex || alive + n > MAX_GUESTS + 2) return null;
   if (def.parts && !def.parts.every((p) => gtex[p])) return null;     // 部品がそろってから出す
   const made = [];
+  let baseSlot = 0;
   for (let i = 0; i < n; i++) {
     const o = { ...opt, delay: i * 0.45 };
-    if (key === 'chochin') { o.s0 = (i - (n - 1) / 2) * 0.6 + (Math.random() - 0.5) * 0.15; o.ph = i * 2.1; }
+    if (i === 0 && ['float', 'hop', 'hophop', 'walk', 'crawl', 'spin'].includes(def.motion)) baseSlot = freeSlot(def.zone);
+    if (def.motion === 'float') { o.s0 = Math.max(-0.75, Math.min(0.75, baseSlot + (i - (n - 1) / 2) * 0.5)); o.ph = i * 2.1; }
+    else if (['hop', 'hophop', 'walk', 'crawl', 'spin'].includes(def.motion)) o.s0 = baseSlot;
     if (key === 'umibozu') o.xc = headNdc ? THREE.MathUtils.clamp(headNdc.x + (Math.random() < 0.5 ? -0.5 : 0.5), -0.7, 0.7) : 0;
     if (def.parts) o.parts = gtex;
     const g = new Guest(ctx, key, tex, o);
@@ -347,14 +363,14 @@ const select = (m) => { selected = m; };
 
 /* ---------- おにの置き場所 ---------- */
 function defaultHomes() {
-  return [[-0.58, -0.42], [0.58, -0.42], [0.0, -0.62]];
+  return [[-0.42, -0.42], [0.42, -0.42], [0.0, -0.62]];
 }
 function updateHomes() {
   if (!isFront()) return;
-  const clampX = (x) => Math.max(-0.82, Math.min(0.82, x));
+  const clampX = (x) => Math.max(-0.46, Math.min(0.46, x));     // 端(|x|>0.6)は、端から出てくるおばけ用にあけておく
   if (headNdc && segActive) {
     const { x, y } = headNdc;
-    const homes = [[x - 0.55, y - 0.55], [x + 0.55, y - 0.55], [x + 0.02, y - 0.1]];
+    const homes = [[x - 0.45, y - 0.55], [x + 0.45, y - 0.55], [x + 0.02, y - 0.1]];
     mons.forEach((m, i) => { m.hx = clampX(homes[i][0]); m.hy = Math.max(-0.9, Math.min(0.85, homes[i][1])); });
   } else {
     const h = defaultHomes();
@@ -741,7 +757,7 @@ async function loadAll() {
 }
 function loadGuestTextures() {            // 起動後に裏で読み込む(待たせない)
   const loader = new THREE.TextureLoader(), aniso = renderer.capabilities.getMaxAnisotropy();
-  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=5`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
+  for (const k of IMG_KEYS) loader.loadAsync(`y_${k}.png?v=6`).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; gtex[k] = t; }).catch(() => {});
 }
 
 async function start(want) {

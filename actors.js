@@ -135,7 +135,7 @@ const MOT = {
     g.rz = 0.05 * Math.sin(60 * u) * Math.exp(-4 * u);
   },
   peek(g, u) {                                   // 画面の端からひょこひょこ
-    const IN = 1.4, OUT = 1.2, edge = g.hw + g.W * 0.6, rest = g.hw - g.W * 0.38;
+    const IN = 1.4, OUT = 1.2, edge = g.hw + g.W * 0.6, rest = g.hw - g.W * 0.12;      // 体の6〜7割だけ見せて、端にとどまる
     let r;
     if (u < IN) r = edge + (rest - edge) * ease(u / IN);
     else if (u > g.L - OUT) r = rest + (edge - rest) * ease((u - (g.L - OUT)) / OUT);
