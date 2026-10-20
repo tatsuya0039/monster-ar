@@ -175,3 +175,48 @@ export class MotionEnergy {
     return this.run >= 3;
   }
 }
+
+/* ---------- 顔の検出(自撮りだけ) ----------
+   MediaPipe Face Detection(同梱の face_detection* ファイル)で「顔の四角・目・鼻・耳」を取る。
+   切り抜きより位置が正確なので、顔に被らない/肩や頭の上に置く、の基準にする */
+export class FaceFinder {
+  constructor(video) {
+    this.video = video; this.ready = false; this.failed = false; this.busy = false;
+    this.src = document.createElement('canvas'); this.sctx = this.src.getContext('2d');
+    this.last = 0; this.face = null; this.seenAt = 0;     // face: { cx, cy, w, h } すべて映像内の 0..1(上が0)
+    this.running = false;
+  }
+  async init() {
+    try {
+      await loadScript('face_detection.js?v=10');
+      this.fd = new window.FaceDetection({ locateFile: (f) => f });
+      this.fd.setOptions({ model: 'short', minDetectionConfidence: 0.5, selfieMode: false });
+      this.fd.onResults((r) => this._results(r));
+      await this.fd.initialize();
+      this.ready = true;
+    } catch (e) { this.failed = true; this.error = e; }
+    return this.ready;
+  }
+  start() { this.running = true; }
+  stop() { this.running = false; this.face = null; }
+  tick(now) {
+    if (!this.ready || this.failed || !this.running || this.busy) return;
+    const v = this.video;
+    if (!v.videoWidth || v.readyState < 2 || now - this.last < 90) return;
+    const W = 256, H = Math.max(2, Math.round(W * v.videoHeight / v.videoWidth));
+    if (this.src.width !== W || this.src.height !== H) { this.src.width = W; this.src.height = H; }
+    this.sctx.drawImage(v, 0, 0, W, H);
+    this.busy = true; this.last = now;
+    this.fd.send({ image: this.src }).catch(() => { this.failed = true; this.face = null; }).finally(() => { this.busy = false; });
+  }
+  _results(r) {
+    const now = performance.now();
+    const ds = (r.detections || []).map((d) => d.boundingBox || (d.boundingBox = null)).filter(Boolean);
+    if (!ds.length) { if (now - this.seenAt > 700) this.face = null; return; }
+    const b = ds.reduce((a, c) => (c.width * c.height > a.width * a.height ? c : a));   // いちばん大きい顔
+    const f = { cx: b.xCenter, cy: b.yCenter, w: b.width, h: b.height };
+    const p = this.face, k = 0.45;
+    this.face = p ? { cx: p.cx + (f.cx - p.cx) * k, cy: p.cy + (f.cy - p.cy) * k, w: p.w + (f.w - p.w) * k, h: p.h + (f.h - p.h) * k } : f;
+    this.seenAt = now;
+  }
+}

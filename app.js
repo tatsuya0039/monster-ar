@@ -1,6 +1,6 @@
 import * as THREE from './three.module.min.js';
 import { GUEST_DEFS, IMG_KEYS, Guest, SIZE_SCALE } from './actors.js?v=9';
-import { Segmenter, Gestures, MotionEnergy } from './sense.js?v=9';
+import { Segmenter, Gestures, MotionEnergy, FaceFinder } from './sense.js?v=10';
 
 /* ============================================================
    Monster AR  v4
@@ -81,6 +81,17 @@ const personMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), personMat);
 personMesh.frustumCulled = false; personMesh.renderOrder = 20; personMesh.visible = false;
 scene.add(personMesh);
 let segActive = false, feature = null, headNdc = null;
+const faceFinder = new FaceFinder(video);
+let faceN = null;                    // 顔の四角(画面のNDC): { x, y(中心), w, h }
+const hasHead = () => isFront() && !!headNdc && (segActive || !!faceN);
+/* 顔が取れているときは、切り抜きから出した頭の位置より、顔の四角を優先する */
+function applyFace() {
+  const f = isFront() ? faceFinder.face : null;
+  if (!f) { faceN = null; return; }
+  const c = personMat.uniforms.uCrop.value, p = videoToNdc(f.cx, f.cy);
+  faceN = { x: p.x, y: p.y, w: (f.w / c.x) * 2, h: (f.h / c.y) * 2 };
+  headNdc = { x: faceN.x, y: faceN.y + faceN.h * 0.82, w: faceN.w * 1.3 };       // 頭のてっぺん(髪の上)
+}
 
 function videoToNdc(u, v) {          // 映像内の位置(0..1, 上が0) → 画面のNDC(左右反転前の座標)
   const c = personMat.uniforms.uCrop.value;
@@ -174,8 +185,8 @@ function freeSlot(zone) {
 const MASS = (a) => (a.def && (a.def.motion === 'nyuru' || a.def.edge) ? 6 : a.def ? 1 : 3);
 /* 顔のまわり(人の前に出るキャラは入れない) */
 function faceBox() {
-  if (!isFront() || !segActive || !headNdc) return null;
-  const th = Math.tan(camera.fov * DEG / 2);
+  if (!hasHead()) return null;
+  if (faceN) return { x: faceN.x, y: faceN.y + faceN.h * 0.12, hx: faceN.w * 0.72 + 0.04, hy: faceN.h * 0.8 + 0.04, face: true };
   return { x: headNdc.x, y: headNdc.y - 0.2, hx: Math.max(0.24, headNdc.w * 0.62), hy: 0.3, face: true };
 }
 function allActors() { return [...mons, ...guests.filter((g) => !g.dead && g.u >= 0)]; }
@@ -463,11 +474,13 @@ function defaultHomes() {
 }
 function updateHomes() {
   if (!isFront()) return;
-  const clampX = (x) => Math.max(-0.5, Math.min(0.5, x));     // 端(|x|>0.6)は、端から出てくるおばけ用にあけておく
-  if (headNdc && segActive) {
+  const clampX = (x) => Math.max(-0.6, Math.min(0.6, x));     // 端(|x|>0.6)は、端から出てくるおばけ用にあけておく
+  if (hasHead()) {
     const { x, y } = headNdc;
-    const homes = [[x - 0.5, y - 0.62], [x + 0.5, y - 0.62], [x + 0.02, y + 0.03]];
-    mons.forEach((m, i) => { m.hx = clampX(homes[i][0]); m.hy = Math.max(-0.9, Math.min(0.85, homes[i][1])); });
+    const homes = faceN
+      ? [[faceN.x - faceN.w * 0.62, faceN.y - faceN.h * 1.25], [faceN.x + faceN.w * 0.62, faceN.y - faceN.h * 1.25], [x + 0.02, Math.min(y, 0.74)]]   // 肩の左右・頭の上
+      : [[x - 0.5, y - 0.62], [x + 0.5, y - 0.62], [x + 0.02, y + 0.03]];
+    mons.forEach((m, i) => { m.hx = clampX(homes[i][0]); m.hy = Math.max(faceN ? -0.56 : -0.9, Math.min(0.85, homes[i][1])); });
   } else {
     const h = defaultHomes();
     mons.forEach((m, i) => { m.hx = h[i][0]; m.hy = h[i][1]; });
@@ -778,6 +791,8 @@ function frame(now) {
 
   // 動きの検出: 切り抜きが使えるときは seg 側、そうでなければ映像の変化量
   seg.tick(now);
+  if (isFront() && faceFinder.ready) { faceFinder.start(); faceFinder.tick(now); } else faceFinder.stop();
+  applyFace();
   if (now - shakeT > 120) { shaky = camera.quaternion.angleTo(shakeQ) > 0.06; shakeQ.copy(camera.quaternion); shakeT = now; }
   if (umiOn && !guests.some((g) => g.key === 'umibozu')) { umiOn = false; castGen++; spawnCast(cast, castGen); }      // 海坊主が帰ったら、元のメンバーが戻る
 
@@ -823,6 +838,8 @@ function ensureSeg() {                    // 切り抜きは裏で準備。で�
   segInitStarted = true;
   if (isFront()) flash('おばけを準備中…', 0);
   seg.init().then((ok) => {
+    try { delete window.Module; window.Module = undefined; } catch (e) { /* 何もしない */ }       // 2つ目のMediaPipeが、1つ目の設定を引き継いで止まるのを防ぐ
+    faceFinder.init();
     if (statusEl.textContent === 'おばけを準備中…') statusEl.classList.remove('on');
     if (ok && isFront()) setSegActive(true);
   });
@@ -895,5 +912,5 @@ window.__ar = {
   overlaps() { const ac = allActors(), det = []; const it = ac.map(boxOf); let mx = 0, n = 0; for (let i = 0; i < it.length; i++) for (let j = i + 1; j < it.length; j++) { const A = it[i], B = it[j]; const ox = A.hx + B.hx - Math.abs(A.x - B.x), oy = A.hy + B.hy - Math.abs(A.y - B.y); if (ox > 0 && oy > 0) { mx = Math.max(mx, Math.min(ox, oy)); n++; det.push([ac[i].key || ac[i].id, ac[j].key || ac[j].id, +Math.min(ox, oy).toFixed(2), +A.x.toFixed(2), +A.y.toFixed(2), +B.x.toFixed(2), +B.y.toFixed(2)]); } } return { max: +mx.toFixed(3), pairs: n, actors: it.length, det }; },
   get guests() { return guests.map((g) => ({ k: g.key, s: +g.s.toFixed(2), u: +g.u.toFixed(1), dead: g.dead })); },
   get cast() { return cast; }, reroll: () => rerollCast(), get mons() { return mons.map((m) => ({ nx: +m.nx.toFixed(2), ny: +m.ny.toFixed(2), x: m.pos.x, z: m.pos.z })); },
-  get state() { return { started, mode, facing, fov: camera.fov, segActive, headNdc, gtex: Object.keys(gtex) }; },
+  get state() { return { started, mode, facing, fov: camera.fov, segActive, headNdc, faceN, gtex: Object.keys(gtex) }; },
 };
